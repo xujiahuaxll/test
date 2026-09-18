@@ -7,6 +7,7 @@ import '../data/marker_repository.dart';
 import '../models/location_mark.dart';
 import '../services/media_store.dart';
 import '../theme/app_theme.dart';
+import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
 import '../widgets/fake_map.dart';
 import '../widgets/voice_player_bar.dart';
@@ -120,6 +121,8 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
               const SizedBox(width: 12),
             ],
             flexibleSpace: FlexibleSpaceBar(
+              // 没有照片时头图用本地绘制的示意图：
+              // 下面的位置卡片已经是真实地图，同屏再开一个原生地图太重。
               background: mark.photoPaths.isEmpty
                   ? FakeMap(
                       seed: ((mark.latitude + mark.longitude) * 1000).round(),
@@ -353,8 +356,9 @@ class _LocationBlock extends StatelessWidget {
             ),
             child: SizedBox(
               height: 130,
-              child: FakeMap(
-                seed: ((mark.latitude + mark.longitude) * 1000).round(),
+              child: AMapPreview(
+                latitude: mark.latitude,
+                longitude: mark.longitude,
               ),
             ),
           ),

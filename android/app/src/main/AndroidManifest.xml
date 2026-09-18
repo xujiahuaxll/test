@@ -12,6 +12,11 @@
         android:maxSdkVersion="32"/>
     <!-- Android 13+ 读取相册图片 -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- 高德地图 SDK 需要联网取瓦片，并判断网络状态 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
 
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
@@ -48,6 +53,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 高德 Key：值来自 android/amap.properties（不进仓库），
+             也可以改用 --dart-define 在运行时传入，二选一即可 -->
+        <meta-data
+            android:name="com.amap.api.v2.apikey"
+            android:value="${AMAP_ANDROID_KEY}" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

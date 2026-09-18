@@ -5,6 +5,14 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// 高德 Key 从 android/amap.properties 读取（该文件不进仓库）。
+// 没有这个文件时占位为空串，编译照常通过，地图会退回本地示意图。
+def amapProperties = new Properties()
+def amapPropertiesFile = rootProject.file("amap.properties")
+if (amapPropertiesFile.exists()) {
+    amapPropertiesFile.withReader("UTF-8") { reader -> amapProperties.load(reader) }
+}
+
 android {
     namespace = "com.example.location_marker"
     compileSdk = flutter.compileSdkVersion
@@ -29,6 +37,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders += [
+            AMAP_ANDROID_KEY: amapProperties.getProperty("AMAP_ANDROID_KEY", "")
+        ]
     }
 
     buildTypes {

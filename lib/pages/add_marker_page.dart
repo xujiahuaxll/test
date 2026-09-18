@@ -8,10 +8,11 @@ import '../models/location_mark.dart';
 import '../services/location_service.dart';
 import '../services/media_store.dart';
 import '../theme/app_theme.dart';
+import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
-import '../widgets/fake_map.dart';
 import '../widgets/record_sheet.dart';
 import '../widgets/voice_player_bar.dart';
+import 'pick_location_page.dart';
 
 /// 新建 / 编辑标记。新建时进入即自动定位。
 class AddMarkerPage extends StatefulWidget {
@@ -119,6 +120,22 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
         _locateState = _LocateState.failed;
       });
     }
+  }
+
+  /// 在高德地图上手动挪一下位置（自动定位不准时用）。
+  Future<void> _pickOnMap() async {
+    final LocationResult? current = _location;
+    final LocationResult? picked = await PickLocationPage.show(
+      context,
+      latitude: current?.latitude ?? 39.909187,
+      longitude: current?.longitude ?? 116.397451,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _location = picked;
+      _locateState = _LocateState.located;
+      _locateError = null;
+    });
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
@@ -314,6 +331,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             location: _location,
             failure: _locateError,
             onRetry: _locate,
+            onPick: _pickOnMap,
           ),
           const SizedBox(height: 14),
           _nameSection(),
@@ -562,12 +580,14 @@ class _LocationCard extends StatelessWidget {
     required this.location,
     required this.failure,
     required this.onRetry,
+    required this.onPick,
   });
 
   final _LocateState state;
   final LocationResult? location;
   final LocationFailure? failure;
   final VoidCallback onRetry;
+  final VoidCallback onPick;
 
   @override
   Widget build(BuildContext context) {
@@ -586,11 +606,10 @@ class _LocationCard extends StatelessWidget {
             height: 168,
             child: Stack(
               children: <Widget>[
-                FakeMap(
-                  seed: result == null
-                      ? 12
-                      : ((result.latitude + result.longitude) * 1000).round(),
-                  dimmed: true,
+                AMapPreview(
+                  latitude: result?.latitude ?? 39.909187,
+                  longitude: result?.longitude ?? 116.397451,
+                  showHint: result != null,
                 ),
                 Positioned(
                   left: 12,
@@ -695,15 +714,32 @@ class _LocationCard extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      result == null
-                          ? ''
-                          : '${result.latitude.toStringAsFixed(6)}, '
-                              '${result.longitude.toStringAsFixed(6)}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: AppColors.textTertiary),
+                    Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            result == null
+                                ? ''
+                                : '${result.latitude.toStringAsFixed(6)}, '
+                                    '${result.longitude.toStringAsFixed(6)}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: AppColors.textTertiary),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: onPick,
+                          child: const Text(
+                            '手动调整',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

@@ -1,0 +1,7 @@
+# 复制成 android/amap.properties 后填入自己的 Key（该文件不会被提交）。
+# 申请地址：https://lbs.amap.com/ → 应用管理 → 新建 Key
+#   Android：需要填包名（com.example.location_marker）和签名的 SHA1
+#   iOS：需要填 Bundle ID
+# 用 ./scripts/run.sh 启动时，这两个值会同时传给 Dart 侧和原生侧。
+AMAP_ANDROID_KEY=你的Android端Key
+AMAP_IOS_KEY=你的iOS端Key

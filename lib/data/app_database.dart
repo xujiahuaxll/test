@@ -8,12 +8,13 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const String fileName = 'location_marker.db';
-  static const int version = 1;
+  static const int version = 2;
 
   static const String tableMarkers = 'markers';
   static const String tableMarkerTags = 'marker_tags';
   static const String tableMarkerPhotos = 'marker_photos';
   static const String tableTags = 'tags';
+  static const String tableSettings = 'settings';
 
   /// 预置标签，首次建库时写入。
   static const List<String> presetTags = <String>[
@@ -44,6 +45,7 @@ class AppDatabase {
       onConfigure: (Database db) =>
           db.execute('PRAGMA foreign_keys = ON'),
       onCreate: onCreate,
+      onUpgrade: onUpgrade,
     );
     _db = db;
     return db;
@@ -101,6 +103,8 @@ class AppDatabase {
       )
     ''');
 
+    await createSettingsTable(db);
+
     await db.execute(
       'CREATE INDEX idx_markers_created_at ON $tableMarkers (created_at DESC)',
     );
@@ -117,5 +121,25 @@ class AppDatabase {
       });
     }
     await batch.commit(noResult: true);
+  }
+
+  /// v1 -> v2：新增设置表（存高德隐私声明的同意状态）。
+  static Future<void> onUpgrade(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 2) {
+      await createSettingsTable(db);
+    }
+  }
+
+  static Future<void> createSettingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $tableSettings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
   }
 }

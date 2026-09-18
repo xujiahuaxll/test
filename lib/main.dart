@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'data/marker_repository.dart';
-import 'services/media_store.dart';
 import 'pages/marker_list_page.dart';
+import 'services/amap_runtime.dart';
+import 'services/media_store.dart';
 import 'theme/app_theme.dart';
+import 'widgets/privacy_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,6 +13,8 @@ Future<void> main() async {
   await MediaStore.instance.warmUp();
   // 首次启动时建库（含预置标签）。
   await MarkerRepository.instance.count();
+  // 读取此前的高德隐私声明同意状态，已同意的话直接告知 SDK。
+  await AmapRuntime.instance.restore();
   runApp(const LocationMarkerApp());
 }
 
@@ -24,7 +28,7 @@ class LocationMarkerApp extends StatelessWidget {
       title: '地点标记',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: const MarkerListPage(),
+      home: const PrivacyGate(child: MarkerListPage()),
     );
   }
 }
