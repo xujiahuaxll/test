@@ -63,61 +63,33 @@ class WaveformBars extends StatelessWidget {
   }
 }
 
-/// 录音中的动态波形（纯视觉动画，不接真实音频输入）。
-class LiveWaveform extends StatefulWidget {
+/// 录音中的实时波形：直接画麦克风采集到的振幅序列，右侧为最新。
+class LiveWaveform extends StatelessWidget {
   const LiveWaveform({
     super.key,
+    required this.levels,
     this.color = AppColors.primary,
     this.barCount = 34,
-    this.running = true,
   });
 
+  final List<double> levels;
   final Color color;
   final int barCount;
-  final bool running;
-
-  @override
-  State<LiveWaveform> createState() => _LiveWaveformState();
-}
-
-class _LiveWaveformState extends State<LiveWaveform>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1400),
-  )..repeat();
-
-  late final List<double> _phases = List<double>.generate(
-    widget.barCount,
-    (int i) => Random(i * 31 + 7).nextDouble() * pi * 2,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (BuildContext context, Widget? child) {
-        final double t = _controller.value * pi * 2;
-        final List<double> levels = List<double>.generate(
-          widget.barCount,
-          (int i) {
-            if (!widget.running) return 0.12;
-            return (0.55 + 0.45 * sin(t + _phases[i])).clamp(0.12, 1.0);
-          },
-        );
-        return WaveformBars(
-          levels: levels,
-          progress: 1,
-          activeColor: widget.color,
-          barWidth: 3.5,
-        );
-      },
+    final List<double> tail = levels.length <= barCount
+        ? <double>[
+            ...List<double>.filled(barCount - levels.length, 0.06),
+            ...levels,
+          ]
+        : levels.sublist(levels.length - barCount);
+
+    return WaveformBars(
+      levels: tail,
+      progress: 1,
+      activeColor: color,
+      barWidth: 3.5,
     );
   }
 }

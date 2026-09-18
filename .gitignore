@@ -8,3 +8,25 @@ pubspec.lock
 .vscode/
 *.iml
 .DS_Store
+
+# Flutter / Dart 生成物
+.metadata
+*.log
+migrate_working_dir/
+
+# Android
+android/local.properties
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties
+*.jks
+
+# iOS
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+ios/Flutter/ephemeral/
+ios/Pods/
+ios/Podfile.lock
+ios/.symlinks/

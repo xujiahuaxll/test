@@ -1,7 +1,7 @@
 name: location_marker
-description: "地点标记 App —— UI Demo（仅页面设计，无功能实现）"
+description: "地点标记 App —— 本地地点记录（内置数据库，不依赖任何服务端）"
 publish_to: "none"
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -11,8 +11,26 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.6
 
+  # 本地存储：sqflite 内置数据库 + 应用私有目录存照片与录音
+  sqflite: ^2.3.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+
+  # 设备能力（均为系统能力，不接任何第三方服务端）
+  geolocator: ^13.0.1
+  geocoding: ^3.0.0
+  image_picker: ^1.1.2
+  record: ^5.1.2
+  just_audio: ^0.9.40
+  speech_to_text: ^6.6.2
+  permission_handler: ^11.3.1
+  uuid: ^4.4.0
+
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^3.0.0
+  sqflite_common_ffi: ^2.3.3
 
 flutter:
   uses-material-design: true

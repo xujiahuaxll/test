@@ -17,7 +17,8 @@ class AppColors {
   static const Color divider = Color(0xFFE6ECEA);
   static const Color danger = Color(0xFFE05B5B);
 
-  /// 标签配色（名称 -> 颜色），列表与详情共用，保证同一标签颜色一致。
+  /// 标签配色。预置标签用固定色，用户自定义的标签按名称散列取色，
+  /// 保证同一个标签在任何页面都是同一个颜色。
   static const Map<String, Color> tagColors = <String, Color>{
     '美食': Color(0xFFE2703A),
     '风景': Color(0xFF2F9E7E),
@@ -29,7 +30,27 @@ class AppColors {
     '待办': Color(0xFFC9A227),
   };
 
-  static Color tagColor(String tag) => tagColors[tag] ?? primary;
+  static const List<Color> tagPalette = <Color>[
+    Color(0xFFE2703A),
+    Color(0xFF2F9E7E),
+    Color(0xFF8D6E63),
+    Color(0xFF7E57C2),
+    Color(0xFF3B8ED0),
+    Color(0xFFD8567A),
+    Color(0xFF546E7A),
+    Color(0xFFC9A227),
+  ];
+
+  static Color tagColor(String tag) {
+    final Color? preset = tagColors[tag];
+    if (preset != null) return preset;
+    if (tag.isEmpty) return primary;
+    int sum = 0;
+    for (final int unit in tag.codeUnits) {
+      sum = (sum + unit) % 100003;
+    }
+    return tagPalette[sum % tagPalette.length];
+  }
 }
 
 /// 通用圆角 / 间距常量，避免各页面写死数字。

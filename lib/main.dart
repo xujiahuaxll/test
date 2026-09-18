@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
 
+import 'data/marker_repository.dart';
+import 'services/media_store.dart';
 import 'pages/marker_list_page.dart';
 import 'theme/app_theme.dart';
 
-void main() => runApp(const LocationMarkerApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 预热应用目录，之后界面可以同步拿到照片 / 录音的绝对路径。
+  await MediaStore.instance.warmUp();
+  // 首次启动时建库（含预置标签）。
+  await MarkerRepository.instance.count();
+  runApp(const LocationMarkerApp());
+}
 
-/// 地点标记 App —— 界面演示版本。
-/// 所有数据均为静态假数据，定位 / 相机 / 录音都只做视觉模拟。
+/// 地点标记 App：数据全部存在本机 SQLite 与应用私有目录，不连任何服务端。
 class LocationMarkerApp extends StatelessWidget {
   const LocationMarkerApp({super.key});
 

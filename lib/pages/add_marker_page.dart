@@ -1,40 +1,89 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:uuid/uuid.dart';
 
-import '../data/demo_data.dart';
-import '../models/marker.dart';
+import '../data/marker_repository.dart';
+import '../models/location_mark.dart';
+import '../services/location_service.dart';
+import '../services/media_store.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/fake_map.dart';
 import '../widgets/record_sheet.dart';
 import '../widgets/voice_player_bar.dart';
 
-/// 添加标记页（UI Demo）。
-/// 进入即模拟「自动定位」：先转圈，再显示地址与经纬度。
+/// 新建 / 编辑标记。新建时进入即自动定位。
 class AddMarkerPage extends StatefulWidget {
-  const AddMarkerPage({super.key});
+  const AddMarkerPage({super.key, this.existing});
+
+  /// 传入已有标记则进入编辑模式。
+  final LocationMark? existing;
 
   @override
   State<AddMarkerPage> createState() => _AddMarkerPageState();
 }
 
-enum _LocateState { locating, located }
+enum _LocateState { locating, located, failed }
 
 enum _NoteMode { text, voice }
 
 class _AddMarkerPageState extends State<AddMarkerPage> {
+  static const Uuid _uuid = Uuid();
+
+  final MarkerRepository _repo = MarkerRepository.instance;
+  final ImagePicker _picker = ImagePicker();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _noteController = TextEditingController();
 
   _LocateState _locateState = _LocateState.locating;
+  LocationFailure? _locateError;
+  LocationResult? _location;
+
   _NoteMode _noteMode = _NoteMode.text;
-  final Set<String> _selectedTags = <String>{'风景'};
-  final List<DemoPhoto> _photos = <DemoPhoto>[];
-  VoiceNote? _voiceNote;
+  final Set<String> _selectedTags = <String>{};
+  List<String> _availableTags = <String>[];
+  final List<String> _photoPaths = <String>[];
+
+  String? _audioPath;
+  Duration? _audioDuration;
+  List<double> _waveform = const <double>[];
+
+  /// 语音识别出的原文。备注里的文字用户可以随意改，这里保留识别原文。
+  String? _transcript;
+
+  /// 编辑时被移除的媒体文件，保存成功后再真正删除。
+  final List<String> _pendingDeletions = <String>[];
+  bool _saving = false;
+
+  bool get _isEditing => widget.existing != null;
 
   @override
   void initState() {
     super.initState();
-    _locate();
+    _loadTags();
+
+    final LocationMark? existing = widget.existing;
+    if (existing != null) {
+      _nameController.text = existing.name;
+      _noteController.text = existing.note;
+      _selectedTags.addAll(existing.tags);
+      _photoPaths.addAll(existing.photoPaths);
+      _audioPath = existing.audioPath;
+      _audioDuration = existing.audioDuration;
+      _waveform = existing.waveform;
+      _transcript = existing.transcript;
+      _noteMode = existing.hasVoice ? _NoteMode.voice : _NoteMode.text;
+      _location = LocationResult(
+        latitude: existing.latitude,
+        longitude: existing.longitude,
+        accuracy: existing.accuracy ?? 0,
+        address: existing.address,
+      );
+      _locateState = _LocateState.located;
+    } else {
+      _locate();
+    }
   }
 
   @override
@@ -44,43 +93,193 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
     super.dispose();
   }
 
-  /// Demo：用延时模拟一次定位请求。
-  Future<void> _locate() async {
-    setState(() => _locateState = _LocateState.locating);
-    await Future<void>.delayed(const Duration(milliseconds: 1600));
+  Future<void> _loadTags() async {
+    final List<String> tags = await _repo.allTags();
     if (!mounted) return;
-    setState(() => _locateState = _LocateState.located);
+    setState(() => _availableTags = tags);
   }
 
-  Future<void> _record() async {
-    final VoiceNote? note = await RecordSheet.show(context);
-    if (note == null || !mounted) return;
+  /// 自动获取当前位置（系统 GPS + 系统逆地理编码）。
+  Future<void> _locate() async {
     setState(() {
-      _voiceNote = note;
-      // 转写结果直接落到备注文本里，可继续手动编辑。
-      if (_noteController.text.trim().isEmpty) {
-        _noteController.text = note.transcript;
-      } else {
-        _noteController.text = '${_noteController.text}\n${note.transcript}';
-      }
+      _locateState = _LocateState.locating;
+      _locateError = null;
     });
+    try {
+      final LocationResult result = await LocationService.instance.current();
+      if (!mounted) return;
+      setState(() {
+        _location = result;
+        _locateState = _LocateState.located;
+      });
+    } on LocationFailure catch (failure) {
+      if (!mounted) return;
+      setState(() {
+        _locateError = failure;
+        _locateState = _LocateState.failed;
+      });
+    }
   }
 
-  void _addPhoto() {
+  Future<void> _pickPhoto(ImageSource source) async {
+    try {
+      final XFile? file = await _picker.pickImage(
+        source: source,
+        imageQuality: 85,
+        maxWidth: 2048,
+      );
+      if (file == null) return;
+      final String relative = await MediaStore.instance.importPhoto(file.path);
+      if (!mounted) return;
+      setState(() => _photoPaths.add(relative));
+    } catch (e) {
+      if (!mounted) return;
+      _toast('打开${source == ImageSource.camera ? '相机' : '相册'}失败：$e');
+    }
+  }
+
+  void _choosePhotoSource() {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (BuildContext sheetContext) => _PhotoSourceSheet(
-        onPick: () {
+        onPick: (ImageSource source) {
           Navigator.of(sheetContext).pop();
-          setState(() {
-            _photos.add(
-              DemoData.photoPool[_photos.length % DemoData.photoPool.length],
-            );
-          });
+          _pickPhoto(source);
         },
       ),
     );
+  }
+
+  Future<void> _record() async {
+    final RecordResult? result = await RecordSheet.show(context);
+    if (result == null || !mounted) return;
+
+    final String? previous = _audioPath;
+    if (previous != null && previous != result.relativePath) {
+      _pendingDeletions.add(previous);
+    }
+
+    setState(() {
+      _audioPath = result.relativePath;
+      _audioDuration = result.duration;
+      _waveform = result.waveform;
+      _noteMode = _NoteMode.voice;
+
+      final String text = result.transcript.trim();
+      if (text.isNotEmpty) {
+        _transcript = text;
+        final String current = _noteController.text.trim();
+        _noteController.text = current.isEmpty ? text : '$current\n$text';
+      }
+    });
+  }
+
+  void _deleteAudio() {
+    final String? path = _audioPath;
+    if (path == null) return;
+    setState(() {
+      _pendingDeletions.add(path);
+      _audioPath = null;
+      _audioDuration = null;
+      _waveform = const <double>[];
+      _transcript = null;
+    });
+  }
+
+  Future<void> _addCustomTag() async {
+    final TextEditingController controller = TextEditingController();
+    final String? tag = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('新建标签'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 8,
+          decoration: const InputDecoration(
+            hintText: '例如：亲子、夜景',
+            counterText: '',
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(80, 40),
+            ),
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (tag == null || tag.isEmpty) return;
+    await _repo.addTag(tag);
+    await _loadTags();
+    if (!mounted) return;
+    setState(() => _selectedTags.add(tag));
+  }
+
+  Future<void> _save() async {
+    final String name = _nameController.text.trim();
+    if (name.isEmpty) {
+      _toast('请先填写标记名称');
+      return;
+    }
+    final LocationResult? location = _location;
+    if (location == null) {
+      _toast('还没有拿到位置，请先完成定位');
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    final DateTime now = DateTime.now();
+    final LocationMark mark = LocationMark(
+      id: widget.existing?.id ?? _uuid.v4(),
+      name: name,
+      tags: _selectedTags.toList(),
+      address: location.address,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      accuracy: location.accuracy,
+      photoPaths: List<String>.from(_photoPaths),
+      note: _noteController.text.trim(),
+      audioPath: _audioPath,
+      audioDuration: _audioDuration,
+      transcript: _audioPath == null ? null : _transcript,
+      waveform: _waveform,
+      createdAt: widget.existing?.createdAt ?? now,
+      updatedAt: now,
+    );
+
+    try {
+      await _repo.save(mark);
+      for (final String path in _pendingDeletions) {
+        await MediaStore.instance.deleteFile(path);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _toast('保存失败：$e');
+      return;
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).pop(mark);
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -91,14 +290,14 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.of(context).maybePop(),
         ),
-        title: const Text('新建标记'),
+        title: Text(_isEditing ? '编辑标记' : '新建标记'),
         actions: <Widget>[
           TextButton(
-            onPressed: () => _showSaved(context),
-            child: const Text(
+            onPressed: _saving ? null : _save,
+            child: Text(
               '保存',
               style: TextStyle(
-                color: AppColors.primary,
+                color: _saving ? AppColors.textTertiary : AppColors.primary,
                 fontWeight: FontWeight.w600,
                 fontSize: 15,
               ),
@@ -110,7 +309,12 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: <Widget>[
-          _LocationCard(state: _locateState, onRetry: _locate),
+          _LocationCard(
+            state: _locateState,
+            location: _location,
+            failure: _locateError,
+            onRetry: _locate,
+          ),
           const SizedBox(height: 14),
           _nameSection(),
           const SizedBox(height: 14),
@@ -121,17 +325,17 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
           _noteSection(),
           const SizedBox(height: 22),
           FilledButton(
-            onPressed: () => _showSaved(context),
-            child: const Text('保存标记'),
-          ),
-          const SizedBox(height: 10),
-          Center(
-            child: Text(
-              '当前为界面演示，数据不会真正保存',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppColors.textTertiary,
-                  ),
-            ),
+            onPressed: _saving ? null : _save,
+            child: _saving
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(_isEditing ? '保存修改' : '保存标记'),
           ),
         ],
       ),
@@ -152,6 +356,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
           TextField(
             controller: _nameController,
             maxLength: 20,
+            textInputAction: TextInputAction.done,
             decoration: const InputDecoration(
               hintText: '给这个地点起个名字，比如「江边观景台」',
               counterText: '',
@@ -180,7 +385,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             spacing: 8,
             runSpacing: 8,
             children: <Widget>[
-              for (final String tag in DemoData.allTags)
+              for (final String tag in _availableTags)
                 _SelectableTag(
                   tag: tag,
                   selected: _selectedTags.contains(tag),
@@ -188,11 +393,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                     if (!_selectedTags.remove(tag)) _selectedTags.add(tag);
                   }),
                 ),
-              _AddTagChip(
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('自定义标签（Demo 未实现）')),
-                ),
-              ),
+              _AddTagChip(onTap: _addCustomTag),
             ],
           ),
         ],
@@ -209,7 +410,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             icon: Icons.photo_camera_outlined,
             title: '标记照片',
             trailing: Text(
-              '${_photos.length}/9',
+              '${_photoPaths.length}/9',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -218,23 +419,32 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             height: 86,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
-              itemCount: _photos.length + 1,
+              itemCount: _photoPaths.length + 1,
               separatorBuilder: (_, __) => const SizedBox(width: 10),
               itemBuilder: (BuildContext context, int index) {
                 if (index == 0) {
-                  return _AddPhotoButton(onTap: _addPhoto);
+                  return _AddPhotoButton(
+                    onTap: _photoPaths.length >= 9
+                        ? () => _toast('最多添加 9 张照片')
+                        : _choosePhotoSource,
+                  );
                 }
                 final int photoIndex = index - 1;
                 return Stack(
                   clipBehavior: Clip.none,
                   children: <Widget>[
-                    PhotoThumb(photo: _photos[photoIndex], size: 86),
+                    PhotoThumb(
+                      relativePath: _photoPaths[photoIndex],
+                      size: 86,
+                    ),
                     Positioned(
                       right: -6,
                       top: -6,
                       child: GestureDetector(
-                        onTap: () =>
-                            setState(() => _photos.removeAt(photoIndex)),
+                        onTap: () => setState(() {
+                          _pendingDeletions.add(_photoPaths[photoIndex]);
+                          _photoPaths.removeAt(photoIndex);
+                        }),
                         child: Container(
                           width: 22,
                           height: 22,
@@ -270,7 +480,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             onChanged: (_NoteMode mode) => setState(() => _noteMode = mode),
           ),
           const SizedBox(height: 14),
-          if (_noteMode == _NoteMode.text)
+          if (_noteMode == _NoteMode.text) ...<Widget>[
             TextField(
               controller: _noteController,
               maxLines: 5,
@@ -278,14 +488,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
               decoration: const InputDecoration(
                 hintText: '写点什么，比如营业时间、停车位置、下次再来要注意的事…',
               ),
-            )
-          else
-            _VoiceNoteArea(
-              voiceNote: _voiceNote,
-              onRecord: _record,
-              onDelete: () => setState(() => _voiceNote = null),
             ),
-          if (_noteMode == _NoteMode.text) ...<Widget>[
             const SizedBox(height: 10),
             Row(
               children: <Widget>[
@@ -296,10 +499,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                   ),
                 ),
                 TextButton.icon(
-                  onPressed: () {
-                    setState(() => _noteMode = _NoteMode.voice);
-                    _record();
-                  },
+                  onPressed: _record,
                   icon: const Icon(Icons.mic_none, size: 18),
                   label: const Text('语音输入'),
                   style: TextButton.styleFrom(
@@ -312,60 +512,66 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                 ),
               ],
             ),
-          ],
-          if (_noteMode == _NoteMode.voice && _voiceNote != null) ...<Widget>[
-            const SizedBox(height: 14),
-            const Divider(),
-            const SizedBox(height: 12),
-            Row(
-              children: <Widget>[
-                const Icon(Icons.text_fields,
-                    size: 16, color: AppColors.textSecondary),
-                const SizedBox(width: 6),
-                Text(
-                  '转写文字（可编辑）',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
-                      ),
-                ),
-              ],
+          ] else ...<Widget>[
+            _VoiceNoteArea(
+              relativePath: _audioPath,
+              duration: _audioDuration,
+              waveform: _waveform,
+              onRecord: _record,
+              onDelete: _deleteAudio,
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _noteController,
-              maxLines: 4,
-              minLines: 3,
-              decoration: const InputDecoration(
-                hintText: '识别结果会显示在这里',
+            if (_audioPath != null) ...<Widget>[
+              const SizedBox(height: 14),
+              const Divider(),
+              const SizedBox(height: 12),
+              Row(
+                children: <Widget>[
+                  const Icon(Icons.text_fields,
+                      size: 16, color: AppColors.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    '转写文字（可编辑）',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
+                        ),
+                  ),
+                ],
               ),
-            ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _noteController,
+                maxLines: 4,
+                minLines: 3,
+                decoration: const InputDecoration(
+                  hintText: '识别结果会显示在这里，可以手动修改',
+                ),
+              ),
+            ],
           ],
         ],
       ),
     );
   }
-
-  void _showSaved(BuildContext context) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(content: Text('保存成功（Demo：未写入任何数据）')),
-      );
-    Navigator.of(context).maybePop();
-  }
 }
 
-/// 顶部定位卡片：地图 + 定位状态 + 地址 / 经纬度。
+/// 顶部定位卡片：定位中 / 定位成功 / 定位失败三种状态。
 class _LocationCard extends StatelessWidget {
-  const _LocationCard({required this.state, required this.onRetry});
+  const _LocationCard({
+    required this.state,
+    required this.location,
+    required this.failure,
+    required this.onRetry,
+  });
 
   final _LocateState state;
+  final LocationResult? location;
+  final LocationFailure? failure;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    final bool locating = state == _LocateState.locating;
+    final LocationResult? result = location;
 
     return Container(
       decoration: BoxDecoration(
@@ -380,14 +586,28 @@ class _LocationCard extends StatelessWidget {
             height: 168,
             child: Stack(
               children: <Widget>[
-                const FakeMap(seed: 12, dimmed: true),
+                FakeMap(
+                  seed: result == null
+                      ? 12
+                      : ((result.latitude + result.longitude) * 1000).round(),
+                  dimmed: true,
+                ),
                 Positioned(
                   left: 12,
                   top: 12,
                   child: _MapChip(
-                    icon: locating ? Icons.gps_not_fixed : Icons.gps_fixed,
-                    label: locating ? '定位中' : '已定位 · 精度 8 米',
-                    highlight: !locating,
+                    icon: switch (state) {
+                      _LocateState.locating => Icons.gps_not_fixed,
+                      _LocateState.located => Icons.gps_fixed,
+                      _LocateState.failed => Icons.gps_off,
+                    },
+                    label: switch (state) {
+                      _LocateState.locating => '定位中',
+                      _LocateState.located =>
+                        '已定位 · 精度 ${result?.accuracy.round() ?? 0} 米',
+                      _LocateState.failed => '定位失败',
+                    },
+                    highlight: state == _LocateState.located,
                   ),
                 ),
                 Positioned(
@@ -414,73 +634,80 @@ class _LocationCard extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-            child: locating
-                ? Row(
-                    children: <Widget>[
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: AppColors.primary,
+            child: switch (state) {
+              _LocateState.locating => Row(
+                  children: <Widget>[
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '正在获取当前位置…',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
+                  ],
+                ),
+              _LocateState.failed => Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Icon(Icons.error_outline,
+                        size: 18, color: AppColors.danger),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        failure?.message ?? '定位失败',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (failure?.kind == LocationFailureKind.deniedForever)
+                      const TextButton(
+                        onPressed: openAppSettings,
+                        child: Text('去设置'),
+                      )
+                    else
+                      TextButton(onPressed: onRetry, child: const Text('重试')),
+                  ],
+                ),
+              _LocateState.located => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Icon(Icons.place,
+                            size: 18, color: AppColors.primary),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            result?.address?.isNotEmpty == true
+                                ? result!.address!
+                                : '未获取到地址（已记录坐标）',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        '正在获取当前位置…',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: AppColors.textSecondary,
-                            ),
-                      ),
-                    ],
-                  )
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          const Icon(Icons.place,
-                              size: 18, color: AppColors.primary),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              '浙江省杭州市西湖区北山街 78 号',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: <Widget>[
-                          Text(
-                            '30.259924, 120.146515',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: AppColors.textTertiary),
-                          ),
-                          const Spacer(),
-                          GestureDetector(
-                            onTap: () => ScaffoldMessenger.of(context)
-                                .showSnackBar(
-                              const SnackBar(
-                                  content: Text('手动选点（Demo 未实现）')),
-                            ),
-                            child: const Text(
-                              '手动调整',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: AppColors.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      result == null
+                          ? ''
+                          : '${result.latitude.toStringAsFixed(6)}, '
+                              '${result.longitude.toStringAsFixed(6)}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: AppColors.textTertiary),
+                    ),
+                  ],
+                ),
+            },
           ),
         ],
       ),
@@ -620,9 +847,18 @@ class _AddPhotoButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: const DottedBorderBox(
-        size: 86,
-        child: Column(
+      child: Container(
+        width: 86,
+        height: 86,
+        decoration: BoxDecoration(
+          color: AppColors.primarySoft.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(
+            color: AppColors.primary.withOpacity(0.35),
+            width: 1.2,
+          ),
+        ),
+        child: const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
             Icon(Icons.add_a_photo_outlined,
@@ -635,31 +871,6 @@ class _AddPhotoButton extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// 虚线感的添加框（用浅色描边近似，避免额外依赖）。
-class DottedBorderBox extends StatelessWidget {
-  const DottedBorderBox({super.key, required this.size, required this.child});
-
-  final double size;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: AppColors.primarySoft.withOpacity(0.55),
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(
-          color: AppColors.primary.withOpacity(0.35),
-          width: 1.2,
-        ),
-      ),
-      child: child,
     );
   }
 }
@@ -680,19 +891,14 @@ class _NoteModeSwitch extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          _item(context, _NoteMode.text, Icons.keyboard_alt_outlined, '文字输入'),
-          _item(context, _NoteMode.voice, Icons.mic_none, '语音转文字'),
+          _item(_NoteMode.text, Icons.keyboard_alt_outlined, '文字输入'),
+          _item(_NoteMode.voice, Icons.mic_none, '语音转文字'),
         ],
       ),
     );
   }
 
-  Widget _item(
-    BuildContext context,
-    _NoteMode value,
-    IconData icon,
-    String label,
-  ) {
+  Widget _item(_NoteMode value, IconData icon, String label) {
     final bool selected = mode == value;
     return Expanded(
       child: GestureDetector(
@@ -711,8 +917,7 @@ class _NoteModeSwitch extends StatelessWidget {
               Icon(
                 icon,
                 size: 16,
-                color:
-                    selected ? AppColors.primary : AppColors.textSecondary,
+                color: selected ? AppColors.primary : AppColors.textSecondary,
               ),
               const SizedBox(width: 6),
               Text(
@@ -735,18 +940,24 @@ class _NoteModeSwitch extends StatelessWidget {
 /// 语音模式下的区域：未录音显示引导，已录音显示播放条。
 class _VoiceNoteArea extends StatelessWidget {
   const _VoiceNoteArea({
-    required this.voiceNote,
+    required this.relativePath,
+    required this.duration,
+    required this.waveform,
     required this.onRecord,
     required this.onDelete,
   });
 
-  final VoiceNote? voiceNote;
+  final String? relativePath;
+  final Duration? duration;
+  final List<double> waveform;
   final VoidCallback onRecord;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
-    if (voiceNote == null) {
+    final String? path = relativePath;
+
+    if (path == null) {
       return GestureDetector(
         onTap: onRecord,
         child: Container(
@@ -769,13 +980,11 @@ class _VoiceNoteArea extends StatelessWidget {
                 child: const Icon(Icons.mic, color: Colors.white, size: 26),
               ),
               const SizedBox(height: 12),
-              Text(
-                '点击开始录音',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+              Text('点击开始录音',
+                  style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
               Text(
-                '录完自动转成文字，音频也会一起保存',
+                '边录边转文字，音频也会一起保存',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -786,7 +995,11 @@ class _VoiceNoteArea extends StatelessWidget {
 
     return Column(
       children: <Widget>[
-        VoicePlayerBar(voiceNote: voiceNote!),
+        VoicePlayerBar(
+          relativePath: path,
+          duration: duration,
+          waveform: waveform,
+        ),
         const SizedBox(height: 10),
         Row(
           children: <Widget>[
@@ -831,7 +1044,7 @@ class _VoiceNoteArea extends StatelessWidget {
 class _PhotoSourceSheet extends StatelessWidget {
   const _PhotoSourceSheet({required this.onPick});
 
-  final VoidCallback onPick;
+  final ValueChanged<ImageSource> onPick;
 
   @override
   Widget build(BuildContext context) {
@@ -859,13 +1072,13 @@ class _PhotoSourceSheet extends StatelessWidget {
               leading: const Icon(Icons.photo_camera_outlined,
                   color: AppColors.primary),
               title: const Text('拍照'),
-              onTap: onPick,
+              onTap: () => onPick(ImageSource.camera),
             ),
             ListTile(
               leading: const Icon(Icons.photo_library_outlined,
                   color: AppColors.primary),
               title: const Text('从相册选择'),
-              onTap: onPick,
+              onTap: () => onPick(ImageSource.gallery),
             ),
             const SizedBox(height: 6),
             TextButton(

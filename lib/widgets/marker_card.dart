@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
-import '../data/demo_data.dart';
-import '../models/marker.dart';
+import '../models/location_mark.dart';
 import '../theme/app_theme.dart';
 import 'common.dart';
 
 /// 列表中的一条标记。
 class MarkerCard extends StatelessWidget {
-  const MarkerCard({super.key, required this.mark, this.onTap});
+  const MarkerCard({super.key, required this.mark, this.onTap, this.onLongPress});
 
   final LocationMark mark;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -21,6 +21,7 @@ class MarkerCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.lg),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(AppRadius.lg),
         child: Container(
           padding: const EdgeInsets.all(12),
@@ -50,7 +51,7 @@ class MarkerCard extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                         Text(
-                          mark.relativeTime(DemoData.now),
+                          mark.relativeTime(),
                           style: const TextStyle(
                             fontSize: 11.5,
                             color: AppColors.textTertiary,
@@ -73,7 +74,7 @@ class MarkerCard extends StatelessWidget {
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
-                            mark.address,
+                            mark.addressOrCoordinate,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: text.bodySmall,
@@ -81,16 +82,18 @@ class MarkerCard extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: <Widget>[
-                        for (final String tag in mark.tags)
-                          TagPill(tag: tag, dense: true),
-                        if (mark.hasVoice) _VoiceBadge(mark: mark),
-                      ],
-                    ),
+                    if (mark.tags.isNotEmpty || mark.hasVoice) ...<Widget>[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: <Widget>[
+                          for (final String tag in mark.tags)
+                            TagPill(tag: tag, dense: true),
+                          if (mark.hasVoice) _VoiceBadge(mark: mark),
+                        ],
+                      ),
+                    ],
                     if (mark.note.isNotEmpty) ...<Widget>[
                       const SizedBox(height: 8),
                       Text(
@@ -118,7 +121,7 @@ class _Thumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (mark.photos.isEmpty) {
+    if (mark.photoPaths.isEmpty) {
       return Container(
         width: 86,
         height: 86,
@@ -127,7 +130,7 @@ class _Thumb extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
         ),
         child: const Icon(
-          Icons.image_outlined,
+          Icons.place_outlined,
           color: AppColors.primary,
           size: 26,
         ),
@@ -136,8 +139,8 @@ class _Thumb extends StatelessWidget {
 
     return Stack(
       children: <Widget>[
-        PhotoThumb(photo: mark.photos.first, size: 86),
-        if (mark.photos.length > 1)
+        PhotoThumb(relativePath: mark.photoPaths.first, size: 86),
+        if (mark.photoPaths.length > 1)
           Positioned(
             right: 5,
             bottom: 5,
@@ -154,7 +157,7 @@ class _Thumb extends StatelessWidget {
                       size: 10, color: Colors.white),
                   const SizedBox(width: 3),
                   Text(
-                    '${mark.photos.length}',
+                    '${mark.photoPaths.length}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 10.5,
@@ -189,7 +192,7 @@ class _VoiceBadge extends StatelessWidget {
           const Icon(Icons.graphic_eq, size: 12, color: AppColors.primary),
           const SizedBox(width: 4),
           Text(
-            mark.voiceNote!.durationText,
+            mark.durationText,
             style: const TextStyle(
               fontSize: 11.5,
               color: AppColors.primary,

@@ -1,54 +1,49 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
-import '../models/marker.dart';
+import '../services/media_store.dart';
 import '../theme/app_theme.dart';
 
-/// 照片占位：Demo 里不接图库，用渐变 + 图标模拟一张照片。
+/// 照片缩略图：读应用目录里的真实文件，文件缺失时显示占位。
 class PhotoThumb extends StatelessWidget {
   const PhotoThumb({
     super.key,
-    required this.photo,
+    required this.relativePath,
     this.size = 84,
     this.radius = AppRadius.md,
-    this.showLabel = false,
   });
 
-  final DemoPhoto photo;
+  final String relativePath;
   final double size;
   final double radius;
-  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: photo.gradient,
-        borderRadius: BorderRadius.circular(radius),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          Icon(photo.icon, color: Colors.white.withOpacity(0.92), size: size * 0.34),
-          if (showLabel) ...<Widget>[
-            const SizedBox(height: 4),
-            Text(
-              photo.label,
-              style: TextStyle(
-                color: Colors.white.withOpacity(0.92),
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-              ),
+    final File file = File(MediaStore.instance.absolute(relativePath));
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Image.file(
+          file,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => Container(
+            color: AppColors.primarySoft,
+            child: const Icon(
+              Icons.broken_image_outlined,
+              color: AppColors.primary,
+              size: 24,
             ),
-          ],
-        ],
+          ),
+        ),
       ),
     );
   }
 }
 
-/// 标签小药丸。
+/// 标签小药丸。自定义标签也能拿到稳定配色。
 class TagPill extends StatelessWidget {
   const TagPill({super.key, required this.tag, this.dense = false});
 
