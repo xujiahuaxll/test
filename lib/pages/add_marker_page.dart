@@ -17,7 +17,7 @@ class AddMarkerPage extends StatefulWidget {
   State<AddMarkerPage> createState() => _AddMarkerPageState();
 }
 
-enum _LocateState { locating, located, failed }
+enum _LocateState { locating, located }
 
 enum _NoteMode { text, voice }
 
@@ -620,11 +620,11 @@ class _AddPhotoButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: DottedBorderBox(
+      child: const DottedBorderBox(
         size: 86,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: const <Widget>[
+          children: <Widget>[
             Icon(Icons.add_a_photo_outlined,
                 size: 22, color: AppColors.primary),
             SizedBox(height: 5),
@@ -750,6 +750,7 @@ class _VoiceNoteArea extends StatelessWidget {
       return GestureDetector(
         onTap: onRecord,
         child: Container(
+          width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 26),
           decoration: BoxDecoration(
             color: AppColors.primarySoft.withOpacity(0.5),
