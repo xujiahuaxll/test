@@ -6,11 +6,18 @@ import 'common.dart';
 
 /// 列表中的一条标记。
 class MarkerCard extends StatelessWidget {
-  const MarkerCard({super.key, required this.mark, this.onTap, this.onLongPress});
+  const MarkerCard({
+    super.key,
+    required this.mark,
+    this.onTap,
+    this.onLongPress,
+    this.onNavigate,
+  });
 
   final LocationMark mark;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final VoidCallback? onNavigate;
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +113,10 @@ class MarkerCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onNavigate != null) ...<Widget>[
+                const SizedBox(width: 6),
+                _NavigateButton(onTap: onNavigate!),
+              ],
             ],
           ),
         ),
@@ -200,6 +211,37 @@ class _VoiceBadge extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 卡片右侧的导航按钮，点一下唤起本机地图应用。
+class _NavigateButton extends StatelessWidget {
+  const _NavigateButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '导航到这里',
+      child: Material(
+        color: AppColors.primarySoft,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: const SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(
+              Icons.navigation_outlined,
+              size: 19,
+              color: AppColors.primary,
+            ),
+          ),
+        ),
       ),
     );
   }

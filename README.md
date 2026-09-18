@@ -12,6 +12,8 @@
   - 语音转文字：边录音边用系统语音识别出文字，实时显示；录完音频文件保留可播放，识别文字自动填进备注且可手动修改。
 - **录音面板**：真实麦克风录音（AAC/m4a），波形由麦克风实时振幅驱动，可暂停/继续/取消；录音时采集的振幅包络会一并存库，播放时画的是这段录音自己的波形。
 - **播放**：详情页与编辑页的播放条播放本地音频，可点波形跳转进度。
+- **全局地图**：首页右上角地图图标进入，一张地图上显示全部标记，可缩放、拖动；点标记从底部升起抽屉，看名称、地址、标签、备注缩略，可直接导航或进详情；打开时自动把所有点框进视野。
+- **导航**：列表每条的右侧、详情页底部、地图抽屉里都有导航按钮，点击唤起本机的高德 / 百度 / 腾讯地图（iOS 还支持苹果地图，Android 支持系统默认地图）。只装了一个就直接拉起，装了多个才让你选，一个都没装则提供复制坐标。
 - **地图**：高德地图显示标记位置；新建标记时可以「手动调整」，在地图上拖动选点，实时反查地址。
 - **详情页**：照片轮播与全屏查看（双指缩放）、高德地图与坐标（一键复制）、语音备注 + 转写文字、备注、编辑、删除。
 - **删除**：删标记时级联清掉标签、照片记录和本机上的照片 / 录音文件。
@@ -40,6 +42,7 @@
 | 定位 | `geolocator` | 系统 GPS / 网络定位 |
 | 地址 | `geocoding` | 系统自带的逆地理编码（iOS CLGeocoder / Android Geocoder），**不需要 API Key**；拿不到地址时界面回落显示经纬度 |
 | 地图 | `amap_map` | 高德地图 SDK，需要自己的 Key，见下方「高德地图」一节 |
+| 唤起导航 | `url_launcher` | 用 scheme 拉起本机已安装的地图应用，本身不联网 |
 | 拍照 / 相册 | `image_picker` | 系统相机与相册 |
 | 录音 | `record` | 系统麦克风，录成 m4a |
 | 语音转文字 | `speech_to_text` | 系统语音识别（iOS SFSpeechRecognizer / Android SpeechRecognizer），**不接任何云 ASR 服务** |
@@ -72,7 +75,23 @@ cp android/amap.properties.example android/amap.properties   # 填入自己的 K
 
 处理方式：数据库里统一存 WGS-84（标准坐标，复制出去能给任何地图用），只在与地图交互时转换——显示时 WGS-84 → GCJ-02，地图选点时 GCJ-02 → WGS-84（迭代反解到厘米级）。转换在 `lib/utils/coordinate.dart`，`test/coordinate_test.dart` 验证了偏移量级、往返精度、境外不偏移和偏移方向。
 
-### 3. 隐私合规：不弹窗会白屏
+### 3. 唤起第三方导航的坐标系
+
+各家地图收的坐标系不一样，传错会把人导到几百米外：
+
+| 应用 | scheme | 坐标系 |
+| --- | --- | --- |
+| 高德 | `androidamap://navi` / `iosamap://navi` | GCJ-02（必须带 `dev=0` 声明已是 GCJ-02） |
+| 百度 | `baidumap://map/direction` | 带 `coord_type=gcj02` 参数传 GCJ-02 |
+| 腾讯 | `qqmap://map/routeplan` | GCJ-02 |
+| 苹果地图 | `http://maps.apple.com/` | WGS-84（原始坐标，不能偏移） |
+| Android 系统 | `geo:` | GCJ-02 |
+
+链接组装在 `lib/services/navigation_launcher.dart`，`test/navigation_launcher_test.dart` 逐家核对了坐标系、关键参数和名称转义。
+
+Android 11+ 和 iOS 需要显式声明才能探测到这些应用是否安装，已配好：`AndroidManifest` 的 `<queries>`（scheme + package）与 `Info.plist` 的 `LSApplicationQueriesSchemes`。
+
+### 4. 隐私合规：不弹窗会白屏
 
 高德要求使用地图前，先把「隐私政策已包含高德条款、已弹窗告知、已取得用户同意」三个状态告诉 SDK，**任一为 false 地图就白屏**。所以：
 
@@ -114,15 +133,19 @@ lib/
     recorder_service.dart       录音（含振幅流）
     speech_service.dart         系统语音识别，静音断句后自动续听并拼接
     amap_runtime.dart           高德 SDK 的 Key 注入与隐私合规状态
+    navigation_launcher.dart    唤起本机地图应用导航（按目标应用转换坐标系）
   pages/
     marker_list_page.dart       列表、搜索、筛选
     add_marker_page.dart        新建 / 编辑
     marker_detail_page.dart     详情、看大图、删除
+    markers_map_page.dart       全局地图：所有标记 + 点击抽屉
     pick_location_page.dart     在高德地图上拖动选点
-  widgets/                      卡片、标签、波形、播放条、录音面板、地图组件、隐私弹窗
+  widgets/                      卡片、标签、波形、播放条、录音面板、地图组件、导航选择、隐私弹窗
 test/
   marker_repository_test.dart   数据层单元测试
   settings_repository_test.dart 设置与数据库升级
   coordinate_test.dart          坐标系转换
+  navigation_launcher_test.dart 各家导航链接组装
   marker_list_page_test.dart    列表页 widget 测试
+  markers_map_page_test.dart    全局地图页
 ```

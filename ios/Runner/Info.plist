@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>iosamap</string>
+		<string>baidumap</string>
+		<string>qqmap</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>用于记录标记的当前位置</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

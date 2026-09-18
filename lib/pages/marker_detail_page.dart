@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
 import '../widgets/fake_map.dart';
+import '../widgets/nav_app_sheet.dart';
 import '../widgets/voice_player_bar.dart';
 import 'add_marker_page.dart';
 
@@ -269,9 +270,9 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
                     children: <Widget>[
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _copyCoordinate,
-                          icon: const Icon(Icons.copy_outlined, size: 18),
-                          label: const Text('复制坐标'),
+                          onPressed: _edit,
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                          label: const Text('编辑'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.textPrimary,
                             side: const BorderSide(color: AppColors.divider),
@@ -284,10 +285,11 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
+                        flex: 2,
                         child: FilledButton.icon(
-                          onPressed: _edit,
-                          icon: const Icon(Icons.edit_outlined, size: 18),
-                          label: const Text('编辑'),
+                          onPressed: () => NavAppSheet.show(context, mark),
+                          icon: const Icon(Icons.navigation_outlined, size: 18),
+                          label: const Text('导航到这里'),
                         ),
                       ),
                     ],

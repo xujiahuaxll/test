@@ -6,8 +6,10 @@ import '../data/marker_repository.dart';
 import '../models/location_mark.dart';
 import '../theme/app_theme.dart';
 import '../widgets/marker_card.dart';
+import '../widgets/nav_app_sheet.dart';
 import 'add_marker_page.dart';
 import 'marker_detail_page.dart';
+import 'markers_map_page.dart';
 
 /// 首页：从本地数据库读取标记列表，支持关键词搜索与标签筛选。
 class MarkerListPage extends StatefulWidget {
@@ -75,6 +77,13 @@ class _MarkerListPageState extends State<MarkerListPage> {
     await _reload();
   }
 
+  Future<void> _openMap() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const MarkersMapPage()),
+    );
+    await _reload();
+  }
+
   Future<void> _openDetail(LocationMark mark) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => MarkerDetailPage(mark: mark)),
@@ -115,7 +124,9 @@ class _MarkerListPageState extends State<MarkerListPage> {
           color: AppColors.primary,
           child: CustomScrollView(
             slivers: <Widget>[
-              SliverToBoxAdapter(child: _Header(total: _total)),
+              SliverToBoxAdapter(
+                child: _Header(total: _total, onOpenMap: _openMap),
+              ),
               SliverToBoxAdapter(
                 child: _SearchBar(
                   controller: _searchController,
@@ -163,6 +174,8 @@ class _MarkerListPageState extends State<MarkerListPage> {
                                 mark: mark,
                                 onTap: () => _openDetail(mark),
                                 onLongPress: () => _confirmDelete(mark),
+                                onNavigate: () =>
+                                    NavAppSheet.show(context, mark),
                               );
                             },
                           ),
@@ -187,22 +200,47 @@ class _MarkerListPageState extends State<MarkerListPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.total});
+  const _Header({required this.total, required this.onOpenMap});
 
   final int total;
+  final VoidCallback onOpenMap;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(20, 14, 16, 12),
+      child: Row(
         children: <Widget>[
-          Text('我的标记', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 4),
-          Text(
-            total == 0 ? '还没有记录任何地点' : '共 $total 个地点 · 全部保存在本机',
-            style: Theme.of(context).textTheme.bodySmall,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('我的标记',
+                    style: Theme.of(context).textTheme.headlineSmall),
+                const SizedBox(height: 4),
+                Text(
+                  total == 0 ? '还没有记录任何地点' : '共 $total 个地点 · 全部保存在本机',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          Tooltip(
+            message: '在地图上查看全部',
+            child: Material(
+              color: AppColors.surface,
+              shape: const CircleBorder(),
+              child: InkWell(
+                onTap: onOpenMap,
+                customBorder: const CircleBorder(),
+                child: const SizedBox(
+                  width: 42,
+                  height: 42,
+                  child: Icon(Icons.map_outlined,
+                      size: 20, color: AppColors.primary),
+                ),
+              ),
+            ),
           ),
         ],
       ),

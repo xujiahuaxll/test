@@ -54,7 +54,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
         <!-- 高德 Key：值来自 android/amap.properties（不进仓库），
-             也可以改用 --dart-define 在运行时传入，二选一即可 -->
+             也可以改用 dart-define 在运行时传入，二选一即可 -->
         <meta-data
             android:name="com.amap.api.v2.apikey"
             android:value="${AMAP_ANDROID_KEY}" />
@@ -77,5 +77,25 @@
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE"/>
         </intent>
+        <!-- Android 11+ 起，查询/唤起第三方地图导航需要显式声明这些 scheme -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="androidamap"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="baidumap"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="qqmap"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="geo"/>
+        </intent>
+        <package android:name="com.autonavi.minimap"/>
+        <package android:name="com.baidu.BaiduMap"/>
+        <package android:name="com.tencent.map"/>
     </queries>
 </manifest>
