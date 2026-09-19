@@ -29,6 +29,13 @@ dependencies:
   x_amap_base: ^1.0.3
   url_launcher: ^6.3.1
 
+dependency_overrides:
+  # amap_map 的 android 模块写死 compileSdkVersion 35，而
+  # flutter_plugin_android_lifecycle 2.0.27+ 在 AAR metadata 里要求
+  # 依赖方编译到 36，构建会在 checkReleaseAarMetadata 阶段失败。
+  # 固定到最后一个用 35 的版本，保持两者一致。
+  flutter_plugin_android_lifecycle: 2.0.26
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
