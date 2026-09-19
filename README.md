@@ -223,6 +223,11 @@ MethodChannel：
   而不是「某路某号」：优先楼宇 > 园区/景区 > 最近的 POI > 整句地址。
   搜索 SDK 的 Key 与隐私声明是独立的一套（`ServiceSettings`），不与地图、定位共用
 - 点地址可以从附近 POI 里另选一个（`PlacePickerSheet`），坐标不变
+- 地点名优先取**周边搜索**（`PoiSearch`，按距离排序）的最近结果，它能到
+  「XX号楼」这一级；逆地理编码常常只到小区或街道，只用它补整句地址
+- 手动选点页（`PickLocationPage`）顶部可搜索（`Inputtips` 输入提示），
+  底部列出当前点附近的地点直接选；页面内部一路用 GCJ-02，只在返回时
+  转一次 WGS-84，不再来回换算
 - 只在「配了 Key 且已同意隐私声明」时启用；失败（除权限类外）自动回落系统定位
 
 写 Kotlin 时有两个坑：`AMapLocationClientOption` 的 setter 是 builder 风格
@@ -334,4 +339,4 @@ test/
   settings_page_test.dart       设置页 widget 测试（改动要真的落库）
 ```
 
-跑一遍：`flutter analyze && flutter test`（119 个测试）。
+跑一遍：`flutter analyze && flutter test`（127 个测试）。

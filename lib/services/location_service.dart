@@ -6,6 +6,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/app_settings.dart';
+import '../utils/coordinate.dart';
 import 'amap_location_service.dart';
 import 'amap_runtime.dart';
 import 'settings_controller.dart';
@@ -198,6 +199,11 @@ class LocationService {
   /// 「某某大厦」「某某景区」。所以再走一次高德的逆地理编码，它会返回附近
   /// 的 POI；都拿不到才退回系统逆地理编码。
   Future<LocationResult> _withPlaceName(LocationResult located) async {
+    // 周边搜索只认 GCJ-02，这里转一次给它用；逆地理编码仍传 WGS-84。
+    final LatLngPair gcj = CoordinateConverter.wgs84ToGcj02(
+      located.latitude,
+      located.longitude,
+    );
     try {
       final AmapPlaces places = await AmapLocationService.instance.nearbyPlaces(
         apiKey: AmapRuntime.instance.effectiveKey,
@@ -206,7 +212,23 @@ class LocationService {
       );
       final String? full =
           places.formatAddress.isEmpty ? null : places.formatAddress;
-      final String? name = places.bestName;
+
+      // 地点名优先用周边搜索的最近结果：它按距离排序、楼宇也搜得到，
+      // 能给到「XX号楼」这一级；逆地理编码常常只到小区或街道。
+      String? name = places.bestName;
+      try {
+        final List<AmapPlace> nearby =
+            await AmapLocationService.instance.nearbyPois(
+          apiKey: AmapRuntime.instance.effectiveKey,
+          latitude: gcj.latitude,
+          longitude: gcj.longitude,
+          radius: 500,
+        );
+        if (nearby.isNotEmpty) name = nearby.first.title;
+      } on LocationFailure {
+        // 拿不到就用逆地理编码给的那个，不影响主流程
+      }
+
       // 地点名取不到也没关系，有整句地址就够界面显示了。
       if (name != null || full != null) {
         return located.copyWith(placeName: name, address: full);

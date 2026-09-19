@@ -17,6 +17,11 @@ import com.amap.api.services.geocoder.GeocodeSearch
 import com.amap.api.services.geocoder.RegeocodeAddress
 import com.amap.api.services.geocoder.RegeocodeQuery
 import com.amap.api.services.geocoder.RegeocodeResult
+import com.amap.api.services.help.Inputtips
+import com.amap.api.services.help.InputtipsQuery
+import com.amap.api.services.help.Tip
+import com.amap.api.services.poisearch.PoiResult
+import com.amap.api.services.poisearch.PoiSearch
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -58,6 +63,8 @@ class AmapLocationHandler(private val context: Context) {
         when (call.method) {
             "locate" -> handleLocate(call, apiKey, result)
             "regeo" -> handleRegeo(call, apiKey, result)
+            "inputTips" -> handleInputTips(call, apiKey, result)
+            "nearbyPois" -> handleNearbyPois(call, apiKey, result)
             else -> result.notImplemented()
         }
     }
@@ -263,15 +270,12 @@ class AmapLocationHandler(private val context: Context) {
             return
         }
         val radius = (call.argument<Int>("radius") ?: 200).toFloat()
+        // 调用方说清楚传的是哪种坐标：地图拖点本来就是 GCJ-02，
+        // 先转成 WGS-84 再让高德转回去，纯属多绕一道、白添误差。
+        val gcj = call.argument<Boolean>("gcj") ?: false
 
         // 搜索 SDK 的 Key 与隐私声明是独立的一套，和地图、定位不共用。
-        if (!servicePrivacyDeclared) {
-            ServiceSettings.updatePrivacyShow(context, true, true)
-            ServiceSettings.updatePrivacyAgree(context, true)
-            servicePrivacyDeclared = true
-        }
-        ServiceSettings.getInstance().setApiKey(apiKey)
-        ServiceSettings.getInstance().setLanguage(ServiceSettings.CHINESE)
+        prepareServices(apiKey)
 
         val search = try {
             GeocodeSearch(context)
@@ -320,12 +324,159 @@ class AmapLocationHandler(private val context: Context) {
         val query = RegeocodeQuery(
             LatLonPoint(latitude, longitude),
             radius,
-            GeocodeSearch.GPS,
+            if (gcj) GeocodeSearch.AMAP else GeocodeSearch.GPS,
         )
         // 默认是 base，只回一条街道地址，不带 POI 和 AOI——
         // 「附近地点」一直是空的就是因为这个，必须显式要 all。
         query.setExtensions(GeocodeSearch.EXTENSIONS_ALL)
         search.getFromLocationAsyn(query)
+    }
+
+    /** POI 一律带上 GCJ-02 坐标，界面选中后要把图钉挪过去。 */
+    private fun poiToMap(poi: PoiItem): Map<String, Any?> = mapOf(
+        "title" to poi.title.orEmpty(),
+        "snippet" to poi.snippet.orEmpty(),
+        "distance" to poi.distance,
+        "typeDes" to poi.typeDes.orEmpty(),
+        "latitude" to poi.latLonPoint?.latitude,
+        "longitude" to poi.latLonPoint?.longitude,
+    )
+
+    /**
+     * 输入提示：边打字边给候选，和地图 App 里的搜索一样。
+     *
+     * 带上当前位置做偏置，同城同名的地点会把近的排前面。
+     */
+    private fun handleInputTips(
+        call: MethodCall,
+        apiKey: String,
+        result: MethodChannel.Result,
+    ) {
+        val keyword = call.argument<String>("keyword").orEmpty().trim()
+        if (keyword.isEmpty()) {
+            result.success(emptyList<Map<String, Any?>>())
+            return
+        }
+        prepareServices(apiKey)
+
+        val query = InputtipsQuery(keyword, call.argument<String>("city").orEmpty())
+        // 不限定城市：用户可能搜外地的地方
+        query.cityLimit = false
+        val lat = call.argument<Double>("latitude")
+        val lng = call.argument<Double>("longitude")
+        if (lat != null && lng != null) {
+            query.location = LatLonPoint(lat, lng)
+        }
+
+        var replied = false
+        val tips = Inputtips(context, query)
+        tips.setInputtipsListener { list: List<Tip>?, rCode: Int ->
+            main.post {
+                if (replied) return@post
+                replied = true
+                if (rCode != AMapException.CODE_AMAP_SUCCESS) {
+                    result.error("tips_$rCode", "搜索失败（错误码 $rCode）", null)
+                    return@post
+                }
+                result.success(
+                    (list ?: emptyList())
+                        // 公交线路之类的提示没有坐标，留着也跳不过去
+                        .filter { it.point != null && !it.name.isNullOrBlank() }
+                        .map { tip ->
+                            mapOf(
+                                "title" to tip.name.orEmpty(),
+                                "district" to tip.district.orEmpty(),
+                                "snippet" to tip.address.orEmpty(),
+                                "latitude" to tip.point.latitude,
+                                "longitude" to tip.point.longitude,
+                            )
+                        }
+                )
+            }
+        }
+        tips.requestInputtipsAsyn()
+    }
+
+    /**
+     * 周边搜索：拖到哪就列出附近有哪些地方，按距离排。
+     *
+     * 比逆地理编码自带的那份 POI 列表准得多，「XX号楼」这种也搜得到——
+     * 之前拖到 27 号楼却显示成一百多米外的公寓，就是因为只用了前者。
+     */
+    private fun handleNearbyPois(
+        call: MethodCall,
+        apiKey: String,
+        result: MethodChannel.Result,
+    ) {
+        val latitude = call.argument<Double>("latitude")
+        val longitude = call.argument<Double>("longitude")
+        if (latitude == null || longitude == null) {
+            result.error("bad_args", "缺少坐标", null)
+            return
+        }
+        val radius = call.argument<Int>("radius") ?: 1000
+        prepareServices(apiKey)
+
+        val query = PoiSearch.Query(
+            call.argument<String>("keyword").orEmpty(),
+            "",
+            "",
+        )
+        query.pageSize = 25
+        query.pageNum = 0
+        query.setDistanceSort(true)
+
+        val search = try {
+            PoiSearch(context, query)
+        } catch (e: AMapException) {
+            result.error("poi_init_failed", "周边搜索初始化失败：${e.errorMessage}", null)
+            return
+        }
+        // 这里收的是 GCJ-02，和地图同一套坐标
+        search.setBound(
+            PoiSearch.SearchBound(LatLonPoint(latitude, longitude), radius),
+        )
+
+        var replied = false
+        search.setOnPoiSearchListener(
+            object : PoiSearch.OnPoiSearchListener {
+                override fun onPoiSearched(poiResult: PoiResult?, rCode: Int) {
+                    main.post {
+                        if (replied) return@post
+                        replied = true
+                        if (rCode != AMapException.CODE_AMAP_SUCCESS) {
+                            result.error(
+                                "poi_$rCode",
+                                "周边搜索失败（错误码 $rCode）",
+                                null,
+                            )
+                            return@post
+                        }
+                        result.success(
+                            (poiResult?.pois ?: arrayListOf())
+                                .filter { !it.title.isNullOrBlank() }
+                                .map { poiToMap(it) }
+                        )
+                    }
+                }
+
+                override fun onPoiItemSearched(item: PoiItem?, rCode: Int) {
+                    // 只用周边搜索，单个 POI 详情不处理
+                }
+            }
+        )
+        search.searchPOIAsyn()
+    }
+
+    /** 搜索类接口共用的 Key 与隐私声明准备。 */
+    private fun prepareServices(apiKey: String) {
+        if (!servicePrivacyDeclared) {
+            ServiceSettings.updatePrivacyShow(context, true, true)
+            ServiceSettings.updatePrivacyAgree(context, true)
+            servicePrivacyDeclared = true
+        }
+        ServiceSettings.getInstance().setApiKey(apiKey)
+        ServiceSettings.getInstance().setLanguage(ServiceSettings.CHINESE)
     }
 
     private fun toMap(address: RegeocodeAddress): Map<String, Any?> {
@@ -342,12 +493,7 @@ class AmapLocationHandler(private val context: Context) {
                 .sortedBy { it.distance }
                 .take(20)
                 .map { poi ->
-                    mapOf(
-                        "title" to poi.title.orEmpty(),
-                        "snippet" to poi.snippet.orEmpty(),
-                        "distance" to poi.distance,
-                        "typeDes" to poi.typeDes.orEmpty(),
-                    )
+                    poiToMap(poi)
                 },
         )
     }

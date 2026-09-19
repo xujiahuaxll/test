@@ -139,6 +139,7 @@ class AmapLocationService {
     required double latitude,
     required double longitude,
     int radius = 200,
+    bool gcj = false,
   }) async {
     final Map<Object?, Object?>? raw;
     try {
@@ -149,6 +150,7 @@ class AmapLocationService {
           'latitude': latitude,
           'longitude': longitude,
           'radius': radius,
+          'gcj': gcj,
         },
       );
     } on PlatformException catch (e) {
@@ -195,6 +197,67 @@ class AmapLocationService {
     }
   }
 
+  /// 输入提示：边打字边给候选。[latitude]/[longitude] 是 GCJ-02，用来做
+  /// 距离偏置，同名地点近的排前面。
+  Future<List<AmapPlace>> inputTips({
+    required String apiKey,
+    required String keyword,
+    double? latitude,
+    double? longitude,
+    String city = '',
+  }) async {
+    if (keyword.trim().isEmpty) return const <AmapPlace>[];
+    return _listCall('inputTips', <String, Object?>{
+      'apiKey': apiKey,
+      'keyword': keyword.trim(),
+      'city': city,
+      'latitude': latitude,
+      'longitude': longitude,
+    }, '搜索失败');
+  }
+
+  /// 周边搜索：列出这个点附近有哪些地方，按距离由近到远。
+  ///
+  /// 坐标是 GCJ-02。比逆地理编码自带的 POI 列表准，楼宇这类也搜得到。
+  Future<List<AmapPlace>> nearbyPois({
+    required String apiKey,
+    required double latitude,
+    required double longitude,
+    int radius = 1000,
+    String keyword = '',
+  }) {
+    return _listCall('nearbyPois', <String, Object?>{
+      'apiKey': apiKey,
+      'latitude': latitude,
+      'longitude': longitude,
+      'radius': radius,
+      'keyword': keyword,
+    }, '获取附近地点失败');
+  }
+
+  Future<List<AmapPlace>> _listCall(
+    String method,
+    Map<String, Object?> args,
+    String fallbackMessage,
+  ) async {
+    try {
+      final List<Object?>? raw =
+          await channel.invokeMethod<List<Object?>>(method, args);
+      return AmapPlace.listFrom(raw);
+    } on PlatformException catch (e) {
+      final String info = (e.message ?? '').trim();
+      throw LocationFailure(
+        LocationFailureKind.unknown,
+        info.isEmpty ? '$fallbackMessage（${e.code}）' : info,
+      );
+    } on MissingPluginException {
+      throw LocationFailure(
+        LocationFailureKind.unknown,
+        '当前平台不支持$fallbackMessage',
+      );
+    }
+  }
+
   /// 高德的错误码分类，界面据此给不同的操作。
   /// 错误码含义见高德文档；这里只区分界面需要区别对待的几类。
   static LocationFailureKind _kindOf(String code) {
@@ -237,9 +300,18 @@ class AmapPlace {
     required this.title,
     required this.distance,
     this.snippet = '',
+    this.latitude,
+    this.longitude,
   });
 
   final String title;
+
+  /// 这个地点自己的 GCJ-02 坐标。选中它时把图钉挪过去用。
+  /// 输入提示里个别条目（公交线路之类）没有坐标，那种已在原生侧滤掉。
+  final double? latitude;
+  final double? longitude;
+
+  bool get hasPoint => latitude != null && longitude != null;
 
   /// 距离当前位置多少米。
   final int distance;
@@ -249,6 +321,19 @@ class AmapPlace {
 
   String get distanceText =>
       distance < 1000 ? '$distance 米' : '${(distance / 1000).toStringAsFixed(1)} 公里';
+
+  static AmapPlace fromMap(Map<Object?, Object?> raw) => AmapPlace(
+        title: (raw['title'] as String? ?? '').trim(),
+        distance: (raw['distance'] as num?)?.toInt() ?? 0,
+        snippet: (raw['snippet'] as String? ?? '').trim(),
+        latitude: (raw['latitude'] as num?)?.toDouble(),
+        longitude: (raw['longitude'] as num?)?.toDouble(),
+      );
+
+  static List<AmapPlace> listFrom(Object? raw) => <AmapPlace>[
+        for (final Object? item in (raw as List<Object?>? ?? const <Object?>[]))
+          if (item is Map<Object?, Object?>) AmapPlace.fromMap(item),
+      ].where((AmapPlace p) => p.title.isNotEmpty).toList(growable: false);
 }
 
 /// 一次逆地理编码的结果。
@@ -297,11 +382,7 @@ class AmapPlaces {
       places: <AmapPlace>[
         for (final Object? item in rawPois)
           if (item is Map<Object?, Object?>)
-            AmapPlace(
-              title: (item['title'] as String? ?? '').trim(),
-              distance: (item['distance'] as num?)?.toInt() ?? 0,
-              snippet: (item['snippet'] as String? ?? '').trim(),
-            ),
+            AmapPlace.fromMap(item),
       ].where((AmapPlace p) => p.title.isNotEmpty).toList(growable: false),
     );
   }

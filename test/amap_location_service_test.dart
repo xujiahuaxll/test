@@ -371,4 +371,94 @@ void main() {
       );
     });
   });
+
+  group('输入提示与周边搜索', () {
+    const String key = 'k';
+
+    test('关键词为空时不发请求，直接返回空', () async {
+      bool called = false;
+      stub(payload: null, onCall: (MethodCall _) => called = true);
+      final List<AmapPlace> tips =
+          await service.inputTips(apiKey: key, keyword: '   ');
+      expect(tips, isEmpty);
+      expect(called, isFalse, reason: '空关键词不该打扰原生侧');
+    });
+
+    test('周边搜索把坐标、半径、关键词如实传下去', () async {
+      MethodCall? seen;
+      stub(payload: null, onCall: (MethodCall call) => seen = call);
+      await service.nearbyPois(
+        apiKey: key,
+        latitude: 39.738,
+        longitude: 116.341,
+        radius: 500,
+        keyword: '号楼',
+      );
+      expect(seen!.method, 'nearbyPois');
+      final Map<Object?, Object?> args =
+          seen!.arguments as Map<Object?, Object?>;
+      expect(args['latitude'], 39.738);
+      expect(args['radius'], 500);
+      expect(args['keyword'], '号楼');
+    });
+
+    test('逆地理编码会声明坐标系，避免多转一道', () async {
+      MethodCall? seen;
+      stub(
+        payload: <Object?, Object?>{'formatAddress': '某地', 'pois': <Object?>[]},
+        onCall: (MethodCall call) => seen = call,
+      );
+      await service.nearbyPlaces(
+        apiKey: key,
+        latitude: 39.738,
+        longitude: 116.341,
+        gcj: true,
+      );
+      expect((seen!.arguments as Map<Object?, Object?>)['gcj'], isTrue);
+    });
+
+    test('结果带回坐标，选中后才能把图钉挪过去', () {
+      final List<AmapPlace> places = AmapPlace.listFrom(<Object?>[
+        <Object?, Object?>{
+          'title': '双河北里乙27号楼',
+          'snippet': '北京市大兴区观音寺街道',
+          'distance': 18,
+          'latitude': 39.7380,
+          'longitude': 116.3416,
+        },
+      ]);
+      expect(places.single.title, '双河北里乙27号楼');
+      expect(places.single.hasPoint, isTrue);
+      expect(places.single.latitude, 39.7380);
+    });
+
+    test('没有坐标的条目标记为不可跳转，但不丢弃', () {
+      final List<AmapPlace> places = AmapPlace.listFrom(<Object?>[
+        <Object?, Object?>{'title': '某公交线路', 'distance': 0},
+      ]);
+      expect(places.single.hasPoint, isFalse);
+    });
+
+    test('标题为空的条目会被剔除', () {
+      final List<AmapPlace> places = AmapPlace.listFrom(<Object?>[
+        <Object?, Object?>{'title': '', 'distance': 0},
+        <Object?, Object?>{'title': '甲28号楼', 'distance': 30},
+      ]);
+      expect(places.map((AmapPlace p) => p.title), <String>['甲28号楼']);
+    });
+
+    test('原生报错时带上错误码，不吞掉', () async {
+      stub(error: PlatformException(code: 'tips_1002', message: ''));
+      await expectLater(
+        service.inputTips(apiKey: key, keyword: '双河北里'),
+        throwsA(
+          isA<LocationFailure>().having(
+            (LocationFailure f) => f.message,
+            'message',
+            contains('tips_1002'),
+          ),
+        ),
+      );
+    });
+  });
 }

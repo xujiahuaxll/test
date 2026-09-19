@@ -12,8 +12,15 @@ import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
 
-/// 在高德地图上手动选点。拖动地图，屏幕中心就是选中的位置。
-/// 返回的坐标已转回 WGS-84，与库里的存储口径一致。
+/// 在高德地图上手动选点。
+///
+/// 三种定位方式，够不准的时候互相补：
+/// 1. 拖地图，屏幕中心就是选中的位置；
+/// 2. 顶部搜索，边打字边给候选，选中直接跳过去；
+/// 3. 底部列出当前位置附近的地点，直接挑一个（拖不到楼门口时用这个）。
+///
+/// 地图给的是 GCJ-02，页面内部一路用 GCJ-02，只在最后返回时转成 WGS-84，
+/// 与库里的存储口径一致。中间不再来回换算，少一道误差。
 class PickLocationPage extends StatefulWidget {
   const PickLocationPage({
     super.key,
@@ -30,7 +37,7 @@ class PickLocationPage extends StatefulWidget {
     required double latitude,
     required double longitude,
   }) {
-    return Navigator.of(context).push(
+    return Navigator.of(context).push<LocationResult>(
       MaterialPageRoute<LocationResult>(
         builder: (_) => PickLocationPage(
           initialLatitude: latitude,
@@ -45,28 +52,51 @@ class PickLocationPage extends StatefulWidget {
 }
 
 class _PickLocationPageState extends State<PickLocationPage> {
-  late LatLngPair _wgs =
-      LatLngPair(widget.initialLatitude, widget.initialLongitude);
+  final TextEditingController _searchController = TextEditingController();
+
+  /// 当前选中点，GCJ-02（与地图同一套坐标）。
+  late LatLngPair _gcj;
+
+  AMapController? _controller;
+
   String? _address;
   String? _placeName;
   bool _resolving = false;
-  Timer? _debounce;
+
+  List<AmapPlace> _nearby = const <AmapPlace>[];
+  String? _nearbyError;
+
+  List<AmapPlace> _tips = const <AmapPlace>[];
+  bool _searching = false;
+
+  Timer? _resolveDebounce;
+  Timer? _searchDebounce;
+
+  /// 每次相机停下都自增，用来丢弃过期请求的返回。
+  int _requestSeq = 0;
 
   @override
   void initState() {
     super.initState();
-    _resolveAddress();
+    _gcj = CoordinateConverter.wgs84ToGcj02(
+      widget.initialLatitude,
+      widget.initialLongitude,
+    );
+    _refreshForCurrentPoint();
   }
 
   @override
   void dispose() {
-    _debounce?.cancel();
+    _resolveDebounce?.cancel();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
+  bool get _amapReady => AmapRuntime.instance.mapReady;
+
   void _onCameraMoveEnd(CameraPosition position) {
-    // 地图给的是 GCJ-02，转回 WGS-84 再记下来。
-    _wgs = CoordinateConverter.gcj02ToWgs84(
+    _gcj = LatLngPair(
       position.target.latitude,
       position.target.longitude,
     );
@@ -75,43 +105,53 @@ class _PickLocationPageState extends State<PickLocationPage> {
       _placeName = null;
       _resolving = true;
     });
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), _resolveAddress);
+    _resolveDebounce?.cancel();
+    _resolveDebounce =
+        Timer(const Duration(milliseconds: 400), _refreshForCurrentPoint);
   }
 
-  /// 解析拖到的这个点。
-  ///
-  /// 和定位那条链路走同一套：优先高德（中文、带地点名），
-  /// 不可用时才回落系统逆地理编码。之前这里是直接调系统的，
-  /// 所以新建页已经是中文地点名了，这个页面还停在英文单行。
-  Future<void> _resolveAddress() async {
+  /// 当前点变了：重新解析地址，并刷新附近地点列表。
+  Future<void> _refreshForCurrentPoint() async {
+    final int seq = ++_requestSeq;
     setState(() => _resolving = true);
+    // 先拿附近地点：它按距离排序、楼宇也搜得到，最近那个就是最贴切的名字。
+    // 逆地理编码只用来补那句完整地址。
+    await _loadNearby(seq);
+    await _resolveAddress(seq);
+  }
 
+  Future<void> _resolveAddress(int seq) async {
     String? placeName;
     String? address;
 
-    if (AmapRuntime.instance.mapReady) {
+    if (_amapReady) {
       try {
         final AmapPlaces places =
             await AmapLocationService.instance.nearbyPlaces(
           apiKey: AmapRuntime.instance.effectiveKey,
-          latitude: _wgs.latitude,
-          longitude: _wgs.longitude,
+          latitude: _gcj.latitude,
+          longitude: _gcj.longitude,
+          gcj: true,
         );
         placeName = places.bestName;
-        address =
-            places.formatAddress.isEmpty ? null : places.formatAddress;
+        address = places.formatAddress.isEmpty ? null : places.formatAddress;
+        // 周边搜索能给到「XX号楼」这一级，比逆地理编码的结果具体
+        if (_nearby.isNotEmpty) placeName = _nearby.first.title;
       } on LocationFailure {
         // 高德不可用就往下走系统解析
       }
     }
 
     if (placeName == null && address == null) {
+      final LatLngPair wgs = CoordinateConverter.gcj02ToWgs84(
+        _gcj.latitude,
+        _gcj.longitude,
+      );
       try {
         final List<Placemark> marks =
             await Geocoding().placemarkFromCoordinates(
-          _wgs.latitude,
-          _wgs.longitude,
+          wgs.latitude,
+          wgs.longitude,
           locale: const Locale('zh', 'CN'),
         );
         if (marks.isNotEmpty) {
@@ -122,7 +162,7 @@ class _PickLocationPageState extends State<PickLocationPage> {
       }
     }
 
-    if (!mounted) return;
+    if (!mounted || seq != _requestSeq) return;
     setState(() {
       _placeName = placeName;
       _address = address;
@@ -130,11 +170,107 @@ class _PickLocationPageState extends State<PickLocationPage> {
     });
   }
 
+  Future<void> _loadNearby(int seq) async {
+    if (!_amapReady) {
+      if (mounted && seq == _requestSeq) {
+        setState(() {
+          _nearby = const <AmapPlace>[];
+          _nearbyError = '没有可用的高德 Key，无法列出附近地点';
+        });
+      }
+      return;
+    }
+    try {
+      final List<AmapPlace> places =
+          await AmapLocationService.instance.nearbyPois(
+        apiKey: AmapRuntime.instance.effectiveKey,
+        latitude: _gcj.latitude,
+        longitude: _gcj.longitude,
+        radius: 500,
+      );
+      if (!mounted || seq != _requestSeq) return;
+      setState(() {
+        _nearby = places;
+        _nearbyError = null;
+      });
+    } on LocationFailure catch (failure) {
+      if (!mounted || seq != _requestSeq) return;
+      setState(() {
+        _nearby = const <AmapPlace>[];
+        _nearbyError = failure.message;
+      });
+    }
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        _tips = const <AmapPlace>[];
+        _searching = false;
+      });
+      return;
+    }
+    setState(() => _searching = true);
+    _searchDebounce = Timer(const Duration(milliseconds: 350), () async {
+      if (!_amapReady) {
+        if (mounted) setState(() => _searching = false);
+        return;
+      }
+      try {
+        final List<AmapPlace> tips =
+            await AmapLocationService.instance.inputTips(
+          apiKey: AmapRuntime.instance.effectiveKey,
+          keyword: value,
+          latitude: _gcj.latitude,
+          longitude: _gcj.longitude,
+        );
+        if (!mounted) return;
+        setState(() {
+          _tips = tips;
+          _searching = false;
+        });
+      } on LocationFailure {
+        if (!mounted) return;
+        setState(() {
+          _tips = const <AmapPlace>[];
+          _searching = false;
+        });
+      }
+    });
+  }
+
+  /// 选中一个地点：图钉挪过去，名称与地址直接采用它的。
+  void _selectPlace(AmapPlace place) {
+    FocusScope.of(context).unfocus();
+    _searchController.clear();
+    setState(() {
+      _tips = const <AmapPlace>[];
+      _placeName = place.title;
+      _address = place.snippet.isEmpty ? _address : place.snippet;
+      _resolving = false;
+    });
+
+    if (!place.hasPoint) return;
+    _gcj = LatLngPair(place.latitude!, place.longitude!);
+    _controller?.moveCamera(
+      CameraUpdate.newLatLng(LatLng(_gcj.latitude, _gcj.longitude)),
+      animated: true,
+    );
+    // 挪过去之后刷新附近列表，但保留刚选中的名称
+    final int seq = ++_requestSeq;
+    _loadNearby(seq);
+  }
+
   void _confirm() {
+    final LatLngPair wgs = CoordinateConverter.gcj02ToWgs84(
+      _gcj.latitude,
+      _gcj.longitude,
+    );
     Navigator.of(context).pop(
       LocationResult(
-        latitude: _wgs.latitude,
-        longitude: _wgs.longitude,
+        latitude: wgs.latitude,
+        longitude: wgs.longitude,
         accuracy: 0,
         address: _address,
         placeName: _placeName,
@@ -144,11 +280,6 @@ class _PickLocationPageState extends State<PickLocationPage> {
 
   @override
   Widget build(BuildContext context) {
-    final LatLngPair gcj = CoordinateConverter.wgs84ToGcj02(
-      widget.initialLatitude,
-      widget.initialLongitude,
-    );
-
     AmapRuntime.instance.initSdk(context);
 
     return Scaffold(
@@ -158,18 +289,18 @@ class _PickLocationPageState extends State<PickLocationPage> {
           Positioned.fill(
             child: AMapWidget(
               initialCameraPosition: CameraPosition(
-                target: LatLng(gcj.latitude, gcj.longitude),
+                target: LatLng(_gcj.latitude, _gcj.longitude),
                 zoom: 17,
               ),
-              mapType:
-                  amapTypeOf(SettingsController.instance.value.mapKind),
+              mapType: amapTypeOf(SettingsController.instance.value.mapKind),
+              onMapCreated: (AMapController controller) =>
+                  _controller = controller,
               onCameraMoveEnd: _onCameraMoveEnd,
               touchPoiEnabled: false,
               tiltGesturesEnabled: false,
               rotateGesturesEnabled: false,
             ),
           ),
-          // 屏幕中心的固定图钉：地图动、针不动。
           const Center(
             child: Padding(
               padding: EdgeInsets.only(bottom: 34),
@@ -177,15 +308,30 @@ class _PickLocationPageState extends State<PickLocationPage> {
             ),
           ),
           Positioned(
-            left: 16,
-            right: 16,
-            bottom: 24,
-            child: _AddressPanel(
-              address: _address,
+            left: 12,
+            right: 12,
+            top: 12,
+            child: _SearchBox(
+              controller: _searchController,
+              searching: _searching,
+              tips: _tips,
+              onChanged: _onSearchChanged,
+              onPick: _selectPlace,
+            ),
+          ),
+          Positioned(
+            left: 12,
+            right: 12,
+            bottom: 16,
+            child: _PickPanel(
               placeName: _placeName,
+              address: _address,
               resolving: _resolving,
-              coordinate: '${_wgs.latitude.toStringAsFixed(6)}, '
-                  '${_wgs.longitude.toStringAsFixed(6)}',
+              coordinate: '${_gcj.latitude.toStringAsFixed(6)}, '
+                  '${_gcj.longitude.toStringAsFixed(6)}',
+              nearby: _nearby,
+              nearbyError: _nearbyError,
+              onPickNearby: _selectPlace,
               onConfirm: _confirm,
             ),
           ),
@@ -219,22 +365,149 @@ class _CenterPin extends StatelessWidget {
   }
 }
 
-class _AddressPanel extends StatelessWidget {
-  const _AddressPanel({
-    required this.address,
+/// 顶部搜索框 + 候选列表。
+class _SearchBox extends StatelessWidget {
+  const _SearchBox({
+    required this.controller,
+    required this.searching,
+    required this.tips,
+    required this.onChanged,
+    required this.onPick,
+  });
+
+  final TextEditingController controller;
+  final bool searching;
+  final List<AmapPlace> tips;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<AmapPlace> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Material(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          elevation: 2,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: <Widget>[
+                const Icon(Icons.search, size: 19,
+                    color: AppColors.textTertiary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: controller,
+                    onChanged: onChanged,
+                    textInputAction: TextInputAction.search,
+                    decoration: const InputDecoration(
+                      hintText: '搜索地点，如「双河北里27号楼」',
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ),
+                if (searching)
+                  const SizedBox(
+                    width: 15,
+                    height: 15,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  )
+                else
+                  ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: controller,
+                    builder: (BuildContext context, TextEditingValue value, _) {
+                      if (value.text.isEmpty) return const SizedBox.shrink();
+                      return GestureDetector(
+                        onTap: () {
+                          controller.clear();
+                          onChanged('');
+                        },
+                        child: const Icon(Icons.close,
+                            size: 18, color: AppColors.textTertiary),
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (tips.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Material(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              elevation: 2,
+              clipBehavior: Clip.antiAlias,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 260),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: tips.length,
+                  separatorBuilder: (_, __) => const Divider(
+                    height: 1,
+                    color: AppColors.divider,
+                    indent: 12,
+                    endIndent: 12,
+                  ),
+                  itemBuilder: (BuildContext context, int index) {
+                    final AmapPlace tip = tips[index];
+                    return ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.place_outlined,
+                          size: 19, color: AppColors.primary),
+                      title: Text(tip.title),
+                      subtitle: tip.snippet.isEmpty
+                          ? null
+                          : Text(
+                              tip.snippet,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                      onTap: () => onPick(tip),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 底部：当前选中的地点 + 附近可选列表 + 确认按钮。
+class _PickPanel extends StatelessWidget {
+  const _PickPanel({
     required this.placeName,
+    required this.address,
     required this.resolving,
     required this.coordinate,
+    required this.nearby,
+    required this.nearbyError,
+    required this.onPickNearby,
     required this.onConfirm,
   });
 
-  final String? address;
   final String? placeName;
+  final String? address;
   final bool resolving;
   final String coordinate;
+  final List<AmapPlace> nearby;
+  final String? nearbyError;
+  final ValueChanged<AmapPlace> onPickNearby;
   final VoidCallback onConfirm;
 
-  /// 标题用地点名，没有就用地址。
   String? get title {
     if (placeName?.isNotEmpty == true) return placeName;
     if (address?.isNotEmpty == true) return address;
@@ -250,7 +523,7 @@ class _AddressPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -283,7 +556,7 @@ class _AddressPanel extends StatelessWidget {
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           if (subtitle != null) ...<Widget>[
-                            const SizedBox(height: 4),
+                            const SizedBox(height: 3),
                             Text(
                               subtitle!,
                               style: Theme.of(context)
@@ -297,7 +570,7 @@ class _AddressPanel extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Text(
             coordinate,
             style: Theme.of(context)
@@ -305,13 +578,99 @@ class _AddressPanel extends StatelessWidget {
                 .bodySmall
                 ?.copyWith(color: AppColors.textTertiary),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
+          _buildNearby(context),
+          const SizedBox(height: 12),
           FilledButton(
             onPressed: onConfirm,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(46),
+            ),
             child: const Text('使用这个位置'),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildNearby(BuildContext context) {
+    final String? error = nearbyError;
+    if (error != null) {
+      return Text(
+        error,
+        style: Theme.of(context)
+            .textTheme
+            .bodySmall
+            ?.copyWith(color: AppColors.accent),
+      );
+    }
+    if (nearby.isEmpty) {
+      return Text(
+        '附近没有找到可选的地点',
+        style: Theme.of(context).textTheme.bodySmall,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          '拖得不够准时，直接从附近选一个',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 168),
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: nearby.length,
+            separatorBuilder: (_, __) => const Divider(
+              height: 1,
+              color: AppColors.divider,
+            ),
+            itemBuilder: (BuildContext context, int index) {
+              final AmapPlace place = nearby[index];
+              final bool selected = place.title == placeName;
+              return ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  selected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  size: 19,
+                  color:
+                      selected ? AppColors.primary : AppColors.textTertiary,
+                ),
+                title: Text(
+                  place.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight:
+                        selected ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+                subtitle: place.snippet.isEmpty
+                    ? null
+                    : Text(
+                        place.snippet,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                trailing: Text(
+                  place.distanceText,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                onTap: () => onPickNearby(place),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }
