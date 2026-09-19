@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../config/amap_config.dart';
 import '../data/marker_repository.dart';
 import '../models/app_settings.dart';
+import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
 import '../services/media_store.dart';
 import '../services/navigation_launcher.dart';
@@ -27,12 +29,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
   MediaUsage? _usage;
   bool _cleaning = false;
+  AppSignature? _signature;
 
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onSettingsChanged);
     _loadUsage();
+    _loadSignature();
   }
 
   @override
@@ -43,6 +47,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _onSettingsChanged() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSignature() async {
+    final AppSignature? signature =
+        await AmapLocationService.instance.appSignature();
+    if (!mounted) return;
+    setState(() => _signature = signature);
   }
 
   Future<void> _loadUsage() async {
@@ -100,6 +111,19 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               _AmapKeyRow(onTap: _editAmapKey),
               _PrivacyRow(onChanged: _onPrivacyChanged),
+              _CopyRow(
+                title: '应用包名',
+                value: _signature?.packageName,
+                hint: '到高德后台登记 Key 时填这个',
+                onCopy: _copy,
+              ),
+              _CopyRow(
+                title: '签名 SHA1',
+                value: _signature?.sha1,
+                hint: '换一版安装包这个值就会变，'
+                    '变了要回高德后台改绑，否则报错误码 1009',
+                onCopy: _copy,
+              ),
             ],
           ),
           _Group(
@@ -387,6 +411,12 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     }
     _toast('Key 已保存，重新打开地图即可生效');
+  }
+
+  Future<void> _copy(String label, String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    _toast('$label已复制');
   }
 
   Future<void> _onPrivacyChanged(bool agreed) async {
@@ -824,6 +854,82 @@ class _PrivacyRow extends StatelessWidget {
         value: runtime.privacyAgreed.value,
         enabled: runtime.hasKey,
         onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+/// 可以一键复制的只读行。值还没读到时显示占位，不给空白。
+class _CopyRow extends StatelessWidget {
+  const _CopyRow({
+    required this.title,
+    required this.value,
+    required this.onCopy,
+    this.hint,
+  });
+
+  final String title;
+  final String? value;
+  final String? hint;
+  final Future<void> Function(String label, String value) onCopy;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? text = value;
+    final bool ready = text != null && text.isNotEmpty;
+
+    return InkWell(
+      onTap: ready ? () => onCopy(title, text) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    ready ? text : '读取中…',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      height: 1.4,
+                      letterSpacing: 0.2,
+                      color: ready
+                          ? AppColors.textSecondary
+                          : AppColors.textTertiary,
+                    ),
+                  ),
+                  if (hint != null) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Text(
+                      hint!,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.45,
+                        color: AppColors.textTertiary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (ready) ...<Widget>[
+              const SizedBox(width: 8),
+              const Icon(Icons.copy_outlined,
+                  size: 17, color: AppColors.primary),
+            ],
+          ],
+        ),
       ),
     );
   }

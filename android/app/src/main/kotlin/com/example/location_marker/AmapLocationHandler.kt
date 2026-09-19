@@ -1,8 +1,11 @@
 package com.example.location_marker
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import java.security.MessageDigest
 import com.amap.api.location.AMapLocation
 import com.amap.api.location.AMapLocationClient
 import com.amap.api.location.AMapLocationClientOption
@@ -41,6 +44,12 @@ class AmapLocationHandler(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {
+        // 这条不需要 Key：用户正是要拿它去高德后台登记，才能让 Key 生效。
+        if (call.method == "appSignature") {
+            handleSignature(result)
+            return
+        }
+
         val apiKey = call.argument<String>("apiKey").orEmpty()
         if (apiKey.isEmpty()) {
             result.error("no_key", "没有可用的高德 Key", null)
@@ -172,6 +181,66 @@ class AmapLocationHandler(private val context: Context) {
 
         client.startLocation()
     }
+
+    /**
+     * 读本安装包的签名 SHA1 与包名。
+     *
+     * 高德 Key 绑定「包名 + 签名 SHA1」，登记时要填这两个值。以前只能去
+     * 构建日志里翻，手机上根本看不到；直接显示在设置页里，换一版包自己
+     * 就能核对、改绑，不用回到电脑前。
+     */
+    private fun handleSignature(result: MethodChannel.Result) {
+        try {
+            val pm = context.packageManager
+            val name = context.packageName
+            val certificates: Array<android.content.pm.Signature> =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val info = pm.getPackageInfo(
+                        name,
+                        PackageManager.GET_SIGNING_CERTIFICATES,
+                    )
+                    val signingInfo = info.signingInfo
+                    if (signingInfo == null) {
+                        result.error("no_signature", "读不到签名信息", null)
+                        return
+                    }
+                    // 轮换过密钥时 apkContentsSigners 给的是当前这本
+                    signingInfo.apkContentsSigners
+                } else {
+                    @Suppress("DEPRECATION")
+                    val info = pm.getPackageInfo(
+                        name,
+                        PackageManager.GET_SIGNATURES,
+                    )
+                    @Suppress("DEPRECATION")
+                    info.signatures
+                } ?: emptyArray()
+
+            val first = certificates.firstOrNull()
+            if (first == null) {
+                result.error("no_signature", "读不到签名信息", null)
+                return
+            }
+            result.success(
+                mapOf(
+                    "packageName" to name,
+                    "sha1" to hexWithColons(sha1Of(first.toByteArray())),
+                    "sha256" to hexWithColons(digestOf(first.toByteArray(), "SHA-256")),
+                )
+            )
+        } catch (e: Throwable) {
+            result.error("signature_failed", "读取签名失败：${e.message}", null)
+        }
+    }
+
+    private fun sha1Of(bytes: ByteArray): ByteArray = digestOf(bytes, "SHA-1")
+
+    private fun digestOf(bytes: ByteArray, algorithm: String): ByteArray =
+        MessageDigest.getInstance(algorithm).digest(bytes)
+
+    /** 高德后台要的是 AA:BB:CC 这种大写冒号分隔的写法。 */
+    private fun hexWithColons(bytes: ByteArray): String =
+        bytes.joinToString(":") { "%02X".format(it) }
 
     /**
      * 逆地理编码：拿坐标换「格式化地址 + 附近 POI 列表」。

@@ -6,7 +6,9 @@ import 'package:location_marker/data/app_database.dart';
 import 'package:location_marker/data/settings_repository.dart';
 import 'package:location_marker/models/app_settings.dart';
 import 'package:location_marker/pages/settings_page.dart';
+import 'package:flutter/services.dart';
 import 'package:location_marker/config/amap_config.dart';
+import 'package:location_marker/services/amap_location_service.dart';
 import 'package:location_marker/services/amap_runtime.dart';
 import 'package:location_marker/services/media_store.dart';
 import 'package:location_marker/services/settings_controller.dart';
@@ -297,6 +299,76 @@ void main() {
         await repo.getString(SettingsRepository.keyAmapAndroidKey),
         key,
       );
+    });
+  });
+
+  group('包名与签名 SHA1', () {
+    const String sha1 = '22:D4:66:50:CD:88:73:91:02:C6:13:14:42:40:2E:51';
+    const String pkg = 'com.example.location_marker';
+
+    /// 原生通道打桩：只回应 appSignature，其它方法返回 null。
+    void stubSignature({Map<Object?, Object?>? payload}) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(AmapLocationService.channel,
+              (MethodCall call) async {
+        if (call.method == 'appSignature') return payload;
+        return null;
+      });
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(AmapLocationService.channel, null);
+    });
+
+    testWidgets('读到后显示包名与 SHA1，供登记 Key 用', (WidgetTester tester) async {
+      stubSignature(payload: <Object?, Object?>{
+        'packageName': pkg,
+        'sha1': sha1,
+      });
+      await pumpPage(tester);
+
+      expect(find.text('应用包名'), findsOneWidget);
+      expect(find.text(pkg), findsOneWidget);
+      expect(find.text('签名 SHA1'), findsOneWidget);
+      expect(find.text(sha1), findsOneWidget);
+    });
+
+    testWidgets('点一下复制到剪贴板', (WidgetTester tester) async {
+      stubSignature(payload: <Object?, Object?>{
+        'packageName': pkg,
+        'sha1': sha1,
+      });
+
+      String? copied;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform,
+              (MethodCall call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        }
+        return null;
+      });
+      addTearDown(() {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+
+      await pumpPage(tester);
+      await tester.tap(find.text('签名 SHA1'));
+      await tester.pumpAndSettle();
+
+      expect(copied, sha1);
+      expect(find.text('签名 SHA1已复制'), findsOneWidget);
+    });
+
+    testWidgets('读不到签名时显示占位，不留空白也不崩', (WidgetTester tester) async {
+      stubSignature();
+      await pumpPage(tester);
+
+      expect(find.text('签名 SHA1'), findsOneWidget);
+      // 两行各一个占位
+      expect(find.text('读取中…'), findsNWidgets(2));
     });
   });
 }

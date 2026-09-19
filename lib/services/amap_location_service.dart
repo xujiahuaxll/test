@@ -110,6 +110,27 @@ class AmapLocationService {
     return parts.isEmpty ? null : parts.join('');
   }
 
+  /// 读本安装包的包名与签名 SHA1。
+  ///
+  /// 到高德开放平台登记 Key 时要填这两个值。放进设置页，换一版包自己
+  /// 就能核对、改绑，不用去翻构建日志。
+  Future<AppSignature?> appSignature() async {
+    try {
+      final Map<Object?, Object?>? raw =
+          await channel.invokeMethod<Map<Object?, Object?>>('appSignature');
+      if (raw == null) return null;
+      return AppSignature(
+        packageName: (raw['packageName'] as String? ?? '').trim(),
+        sha1: (raw['sha1'] as String? ?? '').trim(),
+      );
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      // 非 Android 平台没有这条通道
+      return null;
+    }
+  }
+
   /// 逆地理编码：拿坐标换格式化地址与附近 POI。
   ///
   /// 传 WGS-84（库里存的口径），原生侧用 GeocodeSearch.GPS 让高德自己换算。
@@ -278,4 +299,14 @@ class AmapPlaces {
       ].where((AmapPlace p) => p.title.isNotEmpty).toList(growable: false),
     );
   }
+}
+
+/// 本安装包的身份：到高德后台登记 Key 时要填这两个。
+class AppSignature {
+  const AppSignature({required this.packageName, required this.sha1});
+
+  final String packageName;
+  final String sha1;
+
+  bool get isUsable => packageName.isNotEmpty && sha1.isNotEmpty;
 }
