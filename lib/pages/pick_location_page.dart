@@ -79,9 +79,11 @@ class _PickLocationPageState extends State<PickLocationPage> {
     setState(() => _resolving = true);
     String? address;
     try {
-      await setLocaleIdentifier('zh_CN');
-      final List<Placemark> marks =
-          await placemarkFromCoordinates(_wgs.latitude, _wgs.longitude);
+      final List<Placemark> marks = await Geocoding().placemarkFromCoordinates(
+        _wgs.latitude,
+        _wgs.longitude,
+        locale: const Locale('zh', 'CN'),
+      );
       if (marks.isNotEmpty) {
         address = LocationService.formatPlacemark(marks.first);
       }

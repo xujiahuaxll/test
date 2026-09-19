@@ -1,6 +1,8 @@
 analyzer:
   exclude:
     - build/**
+    # 打了补丁的第三方插件副本，不参与本项目的静态检查
+    - third_party/**
     - android/**
     - ios/**
 include: package:flutter_lints/flutter.yaml

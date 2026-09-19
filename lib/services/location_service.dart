@@ -1,3 +1,4 @@
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -95,8 +96,11 @@ class LocationService {
   Future<String?> _reverseGeocode(double lat, double lng) async {
     try {
       // 让系统按中文返回地址字段。
-      await setLocaleIdentifier('zh_CN');
-      final List<Placemark> marks = await placemarkFromCoordinates(lat, lng);
+      final List<Placemark> marks = await Geocoding().placemarkFromCoordinates(
+        lat,
+        lng,
+        locale: const Locale('zh', 'CN'),
+      );
       if (marks.isEmpty) return null;
       return formatPlacemark(marks.first);
     } catch (_) {

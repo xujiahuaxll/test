@@ -1,0 +1,42 @@
+group 'com.amap.flutter.map'
+version '1.0'
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:3.5.4'
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace = "com.amap.flutter.map"
+    // 本地补丁：上游写死 35，但 flutter_plugin_android_lifecycle 等
+    // 依赖要求使用方编译到 36，保持一致避免 checkAarMetadata 失败。
+    compileSdkVersion 36
+
+    defaultConfig {
+        minSdkVersion 21
+    }
+    lintOptions {
+        disable 'InvalidPackage'
+    }
+}
+
+dependencies {
+    implementation 'com.amap.api:3dmap-location-search:10.1.200_loc6.4.9_sea9.7.4'
+    implementation 'androidx.annotation:annotation:1.9.1'
+}
+
