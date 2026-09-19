@@ -82,6 +82,14 @@ android {
     }
 }
 
+dependencies {
+    // MainActivity 里的 AmapLocationHandler 直接用了高德定位 SDK 的类。
+    // 插件模块 third_party/amap_map 里声明的是 implementation，只进运行时
+    // 不进使用方的编译类路径，所以这里要再声明一次。
+    // 版本必须和插件里的保持一致，否则 Gradle 会解析出两个版本。
+    implementation("com.amap.api:3dmap-location-search:10.1.200_loc6.4.9_sea9.7.4")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

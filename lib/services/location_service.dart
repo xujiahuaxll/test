@@ -6,6 +6,8 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/app_settings.dart';
+import 'amap_location_service.dart';
+import 'amap_runtime.dart';
 import 'settings_controller.dart';
 
 /// 定位失败的原因，界面按类型给不同的提示与操作。
@@ -52,6 +54,7 @@ class LocationService {
     final Duration limit = timeout ?? settings.locateTimeout;
     final LocateAccuracy wanted = accuracy ?? settings.locateAccuracy;
     final bool wantAddress = resolveAddress ?? settings.reverseGeocode;
+    _lastAmapFailure = null;
 
     // 先要权限，再谈定位服务。
     //
@@ -77,6 +80,27 @@ class LocationService {
       );
     }
 
+    // 配了高德 Key 且已同意隐私声明时优先用高德定位：国内精度更好，
+    // 不依赖 Google Play 服务，而且直接带回中文地址。
+    // 它失败了再回落系统定位，不让用户卡在这一步。
+    if (useAmap) {
+      try {
+        return await AmapLocationService.instance.locate(
+          apiKey: AmapRuntime.instance.effectiveKey,
+          accuracy: wanted,
+          timeout: limit,
+          needAddress: wantAddress,
+        );
+      } on LocationFailure catch (failure) {
+        // 权限类问题回落也没用，直接抛给界面
+        if (failure.kind == LocationFailureKind.denied ||
+            failure.kind == LocationFailureKind.deniedForever) {
+          rethrow;
+        }
+        _lastAmapFailure = failure;
+      }
+    }
+
     final Position position;
     try {
       position = await Geolocator.getCurrentPosition(
@@ -91,12 +115,12 @@ class LocationService {
     } on TimeoutException {
       throw LocationFailure(
         LocationFailureKind.timeout,
-        '定位超时（${limit.inSeconds} 秒），请到空旷处重试',
+        _withAmapReason('定位超时（${limit.inSeconds} 秒），请到空旷处重试'),
       );
     } catch (e) {
       throw LocationFailure(
         LocationFailureKind.unknown,
-        '定位失败：$e',
+        _withAmapReason('定位失败：$e'),
       );
     }
 
@@ -116,6 +140,19 @@ class LocationService {
   /// 那条路径上的定位服务判断依赖 GMS；国行机上 GMS 缺失或残缺会让它直接
   /// 报错。系统 LocationManager 没有这个依赖，任何设备上都能用，代价是
   /// 少了 GMS 的传感器融合，室内首次定位可能稍慢一点。
+  /// 高德定位那次失败的原因，用来在系统定位也失败时一并说清楚。
+  LocationFailure? _lastAmapFailure;
+
+  /// 是否该用高德定位：配了 Key 且用户已同意隐私声明。
+  /// 抽成 getter 方便测试覆盖判定条件。
+  bool get useAmap => AmapRuntime.instance.mapReady;
+
+  String _withAmapReason(String message) {
+    final LocationFailure? amap = _lastAmapFailure;
+    if (amap == null) return message;
+    return '$message（高德定位也失败了：${amap.message}）';
+  }
+
   /// [android] 只为测试留的注入口，正常调用不传，取当前平台。
   static LocationSettings buildLocationSettings(
     LocateAccuracy accuracy,

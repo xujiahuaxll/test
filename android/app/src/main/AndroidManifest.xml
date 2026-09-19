@@ -48,6 +48,8 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 高德定位 SDK 必需的后台服务，不声明的话定位起不来 -->
+        <service android:name="com.amap.api.location.APSService"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

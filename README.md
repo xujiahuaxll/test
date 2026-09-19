@@ -41,7 +41,7 @@
 
 | 能力 | 插件 | 说明 |
 | --- | --- | --- |
-| 定位 | `geolocator` | 系统 GPS / 网络定位；Android 上强制 `forceLocationManager`，见下 |
+| 定位 | 高德定位 SDK / `geolocator` | 配了 Key 走高德（自建 MethodChannel），否则系统定位；见下 |
 | 地址 | `geocoding` | 系统自带的逆地理编码（iOS CLGeocoder / Android Geocoder），**不需要 API Key**；拿不到地址时界面回落显示经纬度 |
 | 地图 | `amap_map` | 高德地图 SDK，需要自己的 Key，见下方「高德地图」一节 |
 | 唤起导航 | `url_launcher` | 用 scheme 拉起本机已安装的地图应用，本身不联网 |
@@ -174,7 +174,7 @@ CI 有一步「校验高德的类没被混淆掉」，直接在产物的 dex 里
 
 处理方式：数据库里统一存 WGS-84（标准坐标，复制出去能给任何地图用），只在与地图交互时转换——显示时 WGS-84 → GCJ-02，地图选点时 GCJ-02 → WGS-84（迭代反解到厘米级）。转换在 `lib/utils/coordinate.dart`，`test/coordinate_test.dart` 验证了偏移量级、往返精度、境外不偏移和偏移方向。
 
-### 6. 定位不走 Google Play 服务
+### 6. 定位优先用高德，系统定位兜底
 
 `LocationService.buildLocationSettings` 在 Android 上强制
 `AndroidSettings(forceLocationManager: true)`，并且**先要权限再取位置**。
@@ -186,9 +186,27 @@ geolocator 检测到 Google Play 服务时会默认改用 FusedLocationProvider�
 也提示未开启。更糟的是原来的代码把这个判断放在权限请求之前，卡在第一步，
 权限框根本没机会弹出来。
 
-现在的顺序是：请求权限 → 用系统 LocationManager 取位置 → 只有它明确抛
-`LocationServiceDisabledException`（GPS 与网络定位都关着）才提示服务未开启。
-代价是少了 GMS 的传感器融合，室内首次定位可能稍慢。
+现在的顺序是：请求权限 →（配了 Key 就先走高德定位）→ 回落系统
+LocationManager → 只有它明确抛 `LocationServiceDisabledException`
+（GPS 与网络定位都关着）才提示服务未开启。
+
+**高德定位**：`amap_map` 插件只封装了地图 View，没有封装定位 SDK，但定位
+SDK 的类随 `3dmap-location-search` 已经打进包里了。所以自己搭了一条
+MethodChannel：
+
+- 原生侧 `android/app/src/main/kotlin/.../AmapLocationHandler.kt` 调
+  `AMapLocationClient`，通道名 `location_marker/amap_location`
+- 清单里必须有 `<service android:name="com.amap.api.location.APSService"/>`，
+  少了它高德定位起不来
+- app 模块要再声明一次 `com.amap.api:3dmap-location-search`：插件模块里用的是
+  `implementation`，只进运行时不进使用方的编译类路径。版本要和插件里一致
+- 高德返回 GCJ-02，`AmapLocationService.parseResult` 转回 WGS-84 再存；
+  不转的话保存的坐标会偏出几百米
+- 它直接带回中文地址，这一路不需要再调系统 `geocoding`
+- 只在「配了 Key 且已同意隐私声明」时启用；失败（除权限类外）自动回落系统定位
+
+写 Kotlin 时有两个坑：`AMapLocationClientOption` 的 setter 是 builder 风格
+（返回 option 自身），Kotlin 不会把它们识别成属性，必须写成显式的链式调用。
 
 ### 7. 唤起第三方导航的坐标系
 
@@ -290,9 +308,10 @@ test/
   markers_map_page_test.dart    全局地图页
   app_settings_test.dart        配置项的默认值、序列化与异常值回落
   location_service_test.dart    定位参数组装（含强制 LocationManager）
+  amap_location_service_test.dart 高德定位通道：坐标系转换与错误分类
   amap_config_test.dart         高德 Key 的取舍、格式校验与打码
   media_store_test.dart         媒体占用统计与孤儿文件清理
   settings_page_test.dart       设置页 widget 测试（改动要真的落库）
 ```
 
-跑一遍：`flutter analyze && flutter test`（82 个测试）。
+跑一遍：`flutter analyze && flutter test`（92 个测试）。
