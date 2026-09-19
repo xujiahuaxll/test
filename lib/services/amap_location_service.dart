@@ -205,15 +205,51 @@ class AmapLocationService {
     double? latitude,
     double? longitude,
     String city = '',
+    bool cityLimit = false,
   }) async {
     if (keyword.trim().isEmpty) return const <AmapPlace>[];
     return _listCall('inputTips', <String, Object?>{
       'apiKey': apiKey,
       'keyword': keyword.trim(),
       'city': city,
+      'cityLimit': cityLimit && city.isNotEmpty,
       'latitude': latitude,
       'longitude': longitude,
     }, '搜索失败');
+  }
+
+  /// 行政区划。默认查「中国」并往下取两级，一次拿到「省 -> 市」整棵树。
+  ///
+  /// 城市名单不进代码：区划会变，写死就得跟着发版，漏一个城市用户只能干等。
+  Future<List<AmapDistrict>> districts({
+    required String apiKey,
+    String keyword = '',
+    String level = '',
+    int subDistrict = 2,
+  }) async {
+    try {
+      final List<Object?>? raw = await channel.invokeMethod<List<Object?>>(
+        'districts',
+        <String, Object?>{
+          'apiKey': apiKey,
+          'keyword': keyword,
+          'level': level,
+          'subDistrict': subDistrict,
+        },
+      );
+      return AmapDistrict.listFrom(raw);
+    } on PlatformException catch (e) {
+      final String info = (e.message ?? '').trim();
+      throw LocationFailure(
+        LocationFailureKind.unknown,
+        info.isEmpty ? '获取城市列表失败（${e.code}）' : info,
+      );
+    } on MissingPluginException {
+      throw const LocationFailure(
+        LocationFailureKind.unknown,
+        '当前平台不支持获取城市列表',
+      );
+    }
   }
 
   /// 周边搜索：列出这个点附近有哪些地方，按距离由近到远。
@@ -343,6 +379,9 @@ class AmapPlaces {
     required this.places,
     this.building = '',
     this.aoiName = '',
+    this.province = '',
+    this.city = '',
+    this.adCode = '',
   });
 
   /// 「北京市大兴区天河北路5号」这种整句地址。
@@ -353,6 +392,20 @@ class AmapPlaces {
 
   final String building;
   final String aoiName;
+
+  /// 所在行政区。手动选点页拿它当搜索的默认城市。
+  final String province;
+  final String city;
+
+  /// 区一级的编码，如朝阳区 110105。城市码要取前四位补 00。
+  final String adCode;
+
+  /// 这个点所在的城市。直辖市的 city 是空的，那时候省名就是市名。
+  AmapDistrict? get cityDistrict => AmapDistrict.fromArea(
+        province: province,
+        city: city,
+        adCode: adCode,
+      );
 
   /// 最贴切的一个地点名：楼宇 > 最近的 POI > 园区。
   ///
@@ -379,6 +432,9 @@ class AmapPlaces {
       formatAddress: (raw['formatAddress'] as String? ?? '').trim(),
       building: (raw['building'] as String? ?? '').trim(),
       aoiName: (raw['aoiName'] as String? ?? '').trim(),
+      province: (raw['province'] as String? ?? '').trim(),
+      city: (raw['city'] as String? ?? '').trim(),
+      adCode: (raw['adCode'] as String? ?? '').trim(),
       places: <AmapPlace>[
         for (final Object? item in rawPois)
           if (item is Map<Object?, Object?>)
@@ -396,4 +452,111 @@ class AppSignature {
   final String sha1;
 
   bool get isUsable => packageName.isNotEmpty && sha1.isNotEmpty;
+}
+
+/// 一个行政区（省 / 市 / 区）。城市选择器用它建列表，也用它限定搜索范围。
+class AmapDistrict {
+  const AmapDistrict({
+    required this.name,
+    required this.adcode,
+    this.citycode = '',
+    this.level = '',
+    this.latitude,
+    this.longitude,
+    this.children = const <AmapDistrict>[],
+  });
+
+  final String name;
+
+  /// 行政区编码。传给高德做搜索范围限定时用它，比名字准——
+  /// 同名的区县全国有好几个，编码是唯一的。
+  final String adcode;
+
+  final String citycode;
+
+  /// country / province / city / district
+  final String level;
+
+  /// 区划中心点，GCJ-02。切换城市后把地图挪过去用。
+  final double? latitude;
+  final double? longitude;
+
+  final List<AmapDistrict> children;
+
+  bool get hasCenter => latitude != null && longitude != null;
+
+  /// 把区一级的编码折到市一级：朝阳区 110105 -> 北京市 110100。
+  ///
+  /// 高德的 adcode 是「省(2) 市(2) 区(2)」六位定长，所以截前四位补 00
+  /// 就是所在市。直辖市同理，北京各区都折到 110100。
+  static String cityAdcodeOf(String adCode) {
+    final String code = adCode.trim();
+    if (code.length < 4) return '';
+    return '${code.substring(0, 4)}00';
+  }
+
+  /// 从定位 / 逆地理编码的结果里推出「所在城市」。
+  ///
+  /// 直辖市（北京、上海、天津、重庆）的 city 字段是空的，这时候省名
+  /// 就是市名——不特判的话城市入口会显示成空白。
+  static AmapDistrict? fromArea({
+    required String province,
+    required String city,
+    required String adCode,
+  }) {
+    final String name = city.trim().isNotEmpty ? city.trim() : province.trim();
+    final String code = cityAdcodeOf(adCode);
+    if (name.isEmpty && code.isEmpty) return null;
+    return AmapDistrict(name: name, adcode: code, level: 'city');
+  }
+
+  static AmapDistrict fromMap(Map<Object?, Object?> raw) => AmapDistrict(
+        name: (raw['name'] as String? ?? '').trim(),
+        adcode: (raw['adcode'] as String? ?? '').trim(),
+        citycode: (raw['citycode'] as String? ?? '').trim(),
+        level: (raw['level'] as String? ?? '').trim(),
+        latitude: (raw['latitude'] as num?)?.toDouble(),
+        longitude: (raw['longitude'] as num?)?.toDouble(),
+        children: listFrom(raw['children']),
+      );
+
+  static List<AmapDistrict> listFrom(Object? raw) => <AmapDistrict>[
+        for (final Object? item in (raw as List<Object?>? ?? const <Object?>[]))
+          if (item is Map<Object?, Object?>) AmapDistrict.fromMap(item),
+      ].where((AmapDistrict d) => d.name.isNotEmpty).toList(growable: false);
+
+  /// 把「中国 -> 省 -> 市」这棵树压成一串可选的城市。
+  ///
+  /// 直辖市在树里只有省一级、底下直接挂区，所以省本身也要算一个城市，
+  /// 否则北京上海就从列表里消失了。
+  static List<AmapDistrict> flattenCities(List<AmapDistrict> tree) {
+    final List<AmapDistrict> out = <AmapDistrict>[];
+
+    void walk(AmapDistrict node) {
+      if (node.level == 'country') {
+        for (final AmapDistrict child in node.children) {
+          walk(child);
+        }
+        return;
+      }
+      if (node.level == 'province') {
+        final List<AmapDistrict> cities = node.children
+            .where((AmapDistrict c) => c.level == 'city')
+            .toList(growable: false);
+        if (cities.isEmpty) {
+          // 直辖市：底下直接是区，省即是市
+          out.add(node);
+        } else {
+          out.addAll(cities);
+        }
+        return;
+      }
+      if (node.level == 'city') out.add(node);
+    }
+
+    for (final AmapDistrict node in tree) {
+      walk(node);
+    }
+    return out;
+  }
 }

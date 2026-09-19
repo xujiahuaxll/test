@@ -13,6 +13,10 @@ import com.amap.api.services.core.AMapException
 import com.amap.api.services.core.LatLonPoint
 import com.amap.api.services.core.PoiItem
 import com.amap.api.services.core.ServiceSettings
+import com.amap.api.services.district.DistrictItem
+import com.amap.api.services.district.DistrictResult
+import com.amap.api.services.district.DistrictSearch
+import com.amap.api.services.district.DistrictSearchQuery
 import com.amap.api.services.geocoder.GeocodeSearch
 import com.amap.api.services.geocoder.RegeocodeAddress
 import com.amap.api.services.geocoder.RegeocodeQuery
@@ -65,6 +69,7 @@ class AmapLocationHandler(private val context: Context) {
             "regeo" -> handleRegeo(call, apiKey, result)
             "inputTips" -> handleInputTips(call, apiKey, result)
             "nearbyPois" -> handleNearbyPois(call, apiKey, result)
+            "districts" -> handleDistricts(call, apiKey, result)
             else -> result.notImplemented()
         }
     }
@@ -173,6 +178,11 @@ class AmapLocationHandler(private val context: Context) {
                         "street" to location.street.orEmpty(),
                         "streetNum" to location.streetNum.orEmpty(),
                         "district" to location.district.orEmpty(),
+                        // 手动选点页要拿它做搜索的城市范围
+                        "province" to location.province.orEmpty(),
+                        "city" to location.city.orEmpty(),
+                        "cityCode" to location.cityCode.orEmpty(),
+                        "adCode" to location.adCode.orEmpty(),
                         "locationType" to location.locationType,
                     )
                 )
@@ -360,8 +370,9 @@ class AmapLocationHandler(private val context: Context) {
         prepareServices(apiKey)
 
         val query = InputtipsQuery(keyword, call.argument<String>("city").orEmpty())
-        // 不限定城市：用户可能搜外地的地方
-        query.cityLimit = false
+        // 由调用方决定限不限城市。不限的话搜「人民医院」会把全国的都列出来，
+        // 翻十页也找不到身边那家；选了城市就只在城里找。
+        query.cityLimit = call.argument<Boolean>("cityLimit") ?: false
         val lat = call.argument<Double>("latitude")
         val lng = call.argument<Double>("longitude")
         if (lat != null && lng != null) {
@@ -468,6 +479,83 @@ class AmapLocationHandler(private val context: Context) {
         search.searchPOIAsyn()
     }
 
+    /**
+     * 行政区划查询：给手动选点页的城市选择器供货。
+     *
+     * 城市名单不写死在代码里——写死就意味着行政区划一调整就得重新发包，
+     * 而且漏掉哪个城市用户只能干等。直接问高德，它本来就维护着这份数据。
+     *
+     * [subDistrict] 是往下取几级：查「中国」取 2 级就是「省 + 市」，
+     * 一次请求把整棵选择树拿全，之后翻省份、搜城市都在本地做。
+     */
+    private fun handleDistricts(
+        call: MethodCall,
+        apiKey: String,
+        result: MethodChannel.Result,
+    ) {
+        val keyword = call.argument<String>("keyword").orEmpty().trim()
+        val level = call.argument<String>("level").orEmpty().trim()
+        val subDistrict = call.argument<Int>("subDistrict") ?: 1
+        prepareServices(apiKey)
+
+        val search = try {
+            DistrictSearch(context)
+        } catch (e: AMapException) {
+            result.error(
+                "district_init_failed",
+                "行政区划查询初始化失败：${e.errorMessage}",
+                null,
+            )
+            return
+        }
+
+        val query = DistrictSearchQuery()
+        query.keywords = keyword.ifEmpty { DistrictSearchQuery.KEYWORDS_COUNTRY }
+        if (level.isNotEmpty()) query.keywordsLevel = level
+        // 边界是一大串经纬度点，这里只要名字，不要白传几百 KB
+        query.isShowBoundary = false
+        query.isShowChild = true
+        query.subDistrict = subDistrict
+        query.pageSize = 20
+        query.pageNum = 0
+        search.setQuery(query)
+
+        var replied = false
+        search.setOnDistrictSearchListener { districtResult: DistrictResult? ->
+            main.post {
+                if (replied) return@post
+                replied = true
+                // 这个回调没有 rCode，错误藏在结果对象里
+                val failure = districtResult?.getAMapException()
+                if (failure != null &&
+                    failure.errorCode != AMapException.CODE_AMAP_SUCCESS
+                ) {
+                    result.error(
+                        "district_${failure.errorCode}",
+                        "行政区划查询失败（错误码 ${failure.errorCode}）",
+                        null,
+                    )
+                    return@post
+                }
+                val items = districtResult?.getDistrict() ?: arrayListOf()
+                result.success(items.map { districtToMap(it) })
+            }
+        }
+        search.searchDistrictAsyn()
+    }
+
+    /** 递归展开子级，Dart 侧直接拿去建两级列表。 */
+    private fun districtToMap(item: DistrictItem): Map<String, Any?> = mapOf(
+        "name" to item.name.orEmpty(),
+        "adcode" to item.adcode.orEmpty(),
+        "citycode" to item.citycode.orEmpty(),
+        "level" to item.level.orEmpty(),
+        "latitude" to item.center?.latitude,
+        "longitude" to item.center?.longitude,
+        "children" to (item.getSubDistrict() ?: emptyList())
+            .map { districtToMap(it) },
+    )
+
     /** 搜索类接口共用的 Key 与隐私声明准备。 */
     private fun prepareServices(apiKey: String) {
         if (!servicePrivacyDeclared) {
@@ -483,6 +571,11 @@ class AmapLocationHandler(private val context: Context) {
         val pois: List<PoiItem> = address.pois ?: emptyList()
         return mapOf(
             "formatAddress" to address.formatAddress.orEmpty(),
+            "province" to address.province.orEmpty(),
+            "city" to address.city.orEmpty(),
+            "cityCode" to address.cityCode.orEmpty(),
+            // 直辖市的 city 是空的，adCode 前四位才是能用来限定搜索的城市码
+            "adCode" to address.adCode.orEmpty(),
             "district" to address.district.orEmpty(),
             "township" to address.township.orEmpty(),
             "neighborhood" to address.neighborhood.orEmpty(),

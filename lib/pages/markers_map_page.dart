@@ -1,4 +1,6 @@
 import 'dart:math';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:amap_map/amap_map.dart';
 import 'package:flutter/material.dart';
@@ -8,9 +10,11 @@ import '../data/marker_repository.dart';
 import '../models/app_settings.dart';
 import '../models/location_mark.dart';
 import '../services/amap_runtime.dart';
+import '../services/media_store.dart';
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
+import '../utils/marker_icon.dart';
 import '../widgets/common.dart';
 import '../widgets/nav_app_sheet.dart';
 import 'marker_detail_page.dart';
@@ -27,10 +31,26 @@ class MarkersMapPageState extends State<MarkersMapPage> {
   final MarkerRepository _repo = MarkerRepository.instance;
 
   List<LocationMark> _marks = <LocationMark>[];
+  List<String> _allTags = <String>[];
+
+  /// 顶部快捷筛选选中的标签。null = 全部。
+  String? _tagFilter;
+
   bool _loading = true;
 
   /// 地图 Marker 的 id -> 标记，点击回调只带回 id。
   final Map<String, LocationMark> _markerIndex = <String, LocationMark>{};
+
+  /// 标记 id -> 地图 Marker 的 id。
+  ///
+  /// Marker 的 id 是构造时随机生成的，每次重建都换一个，插件就会把旧的全删
+  /// 了再加一遍——选中态一闪一闪的。把 id 记下来沿用，插件只改图标。
+  final Map<String, String> _markerIds = <String, String>{};
+
+  /// 画好的图标，按「标签 + 封面 + 选中」缓存，同款标记共用一张。
+  final Map<String, BitmapDescriptor> _iconCache =
+      <String, BitmapDescriptor>{};
+
   Set<Marker> _markers = <Marker>{};
 
   LocationMark? _selected;
@@ -44,43 +64,127 @@ class MarkersMapPageState extends State<MarkersMapPage> {
 
   Future<void> _load() async {
     final List<LocationMark> marks = await _repo.query(
+      tag: _tagFilter,
       sort: SettingsController.instance.value.markerSort,
     );
+    final List<String> tags = await _repo.allTags();
     if (!mounted) return;
     setState(() {
       _marks = marks;
-      _markers = _buildMarkers(marks);
+      _allTags = tags;
       _loading = false;
-      // 刷新后原选中项可能已被删除
+      // 刷新后原选中项可能已被删除，或者被筛选挡掉了
       if (_selected != null &&
           !marks.any((LocationMark m) => m.id == _selected!.id)) {
         _selected = null;
       }
+      _markers = _composeMarkers(marks);
     });
+    await _prepareIcons(marks);
   }
 
-  Set<Marker> _buildMarkers(List<LocationMark> marks) {
+  /// 图标的缓存键。同标签、同封面的标记长得一模一样，画一张就够。
+  static String iconKeyOf(LocationMark mark, bool selected) {
+    final String cover =
+        mark.photoPaths.isEmpty ? '' : mark.photoPaths.first;
+    final String tag = mark.tags.isEmpty ? '' : mark.tags.first;
+    return '$tag|$cover|${selected ? 's' : 'n'}';
+  }
+
+  Set<Marker> _composeMarkers(List<LocationMark> marks) {
     _markerIndex.clear();
     final Set<Marker> result = <Marker>{};
     for (final LocationMark mark in marks) {
+      final bool selected = mark.id == _selected?.id;
       final LatLngPair gcj =
           CoordinateConverter.wgs84ToGcj02(mark.latitude, mark.longitude);
       final Marker marker = Marker(
         position: LatLng(gcj.latitude, gcj.longitude),
+        icon: _iconCache[iconKeyOf(mark, selected)] ??
+            BitmapDescriptor.defaultMarker,
+        // 选中的那个压在最上面，不然会被旁边的点盖住
+        zIndex: selected ? 20 : 1,
         infoWindowEnable: false,
         onTap: _onMarkerTap,
       );
+      final String? previous = _markerIds[mark.id];
+      if (previous != null) marker.setIdForCopy(previous);
+      _markerIds[mark.id] = marker.id;
       _markerIndex[marker.id] = mark;
       result.add(marker);
     }
     return result;
   }
 
+  /// 把还没画过的图标补齐，画完一次性刷上去。
+  ///
+  /// 选中态和未选中态一起画：等点下去再画会卡一下，而画一张图本来就比
+  /// 解码封面图便宜得多——封面按 cover 路径去重，一张只解一次。
+  Future<void> _prepareIcons(List<LocationMark> marks) async {
+    final double ratio = MediaQuery.devicePixelRatioOf(context);
+    final Map<String, ui.Image?> photos = <String, ui.Image?>{};
+    bool changed = false;
+
+    for (final LocationMark mark in marks) {
+      final String cover =
+          mark.photoPaths.isEmpty ? '' : mark.photoPaths.first;
+      for (final bool selected in const <bool>[false, true]) {
+        final String key = iconKeyOf(mark, selected);
+        if (_iconCache.containsKey(key)) continue;
+        if (cover.isNotEmpty && !photos.containsKey(cover)) {
+          photos[cover] = await MarkerIcon.loadThumb(
+            MediaStore.instance.absolute(cover),
+          );
+        }
+        final Uint8List bytes = await MarkerIcon.render(
+          color: AppColors.tagColor(mark.tags.isEmpty ? '' : mark.tags.first),
+          photo: cover.isEmpty ? null : photos[cover],
+          selected: selected,
+          pixelRatio: ratio,
+        );
+        _iconCache[key] = BitmapDescriptor.fromBytes(bytes);
+        changed = true;
+      }
+      if (!mounted) break;
+    }
+
+    for (final ui.Image? image in photos.values) {
+      image?.dispose();
+    }
+    if (changed && mounted) {
+      setState(() => _markers = _composeMarkers(_marks));
+    }
+  }
+
   void _onMarkerTap(String markerId) {
     final LocationMark? mark = _markerIndex[markerId];
     if (mark == null) return;
-    setState(() => _selected = mark);
+    _select(mark);
     _moveTo(mark);
+  }
+
+  /// 换选中项：图标要跟着换，不然点了哪个只有抽屉知道。
+  void _select(LocationMark? mark) {
+    if (_selected?.id == mark?.id) return;
+    setState(() {
+      _selected = mark;
+      _markers = _composeMarkers(_marks);
+    });
+  }
+
+  Future<void> _applyTagFilter(String? tag) async {
+    if (_tagFilter == tag) return;
+    // 这里刻意不把 _loading 打开：那会把整张地图换成转圈，AMapWidget 被
+    // 销毁重建，视角也跟着回到原点。筛选只换一批 Marker，地图留着。
+    setState(() => _tagFilter = tag);
+    await _load();
+    // 筛完剩下的点可能都在另一片区域，把视野重新框过去
+    if (mounted && _marks.isNotEmpty) {
+      _controller?.moveCamera(
+        CameraUpdate.newCameraPosition(_initialCamera()),
+        animated: true,
+      );
+    }
   }
 
   void _moveTo(LocationMark mark) {
@@ -147,6 +251,32 @@ class MarkersMapPageState extends State<MarkersMapPage> {
           : Stack(
               children: <Widget>[
                 Positioned.fill(child: _buildMap()),
+                if (_marks.isEmpty && _tagFilter != null)
+                  Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(AppRadius.md),
+                        boxShadow: kCardShadow,
+                      ),
+                      child: Text('「$_tagFilter」下还没有标记'),
+                    ),
+                  ),
+                if (_allTags.isNotEmpty)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 10,
+                    child: _TagFilterBar(
+                      tags: _allTags,
+                      selected: _tagFilter,
+                      onSelect: _applyTagFilter,
+                    ),
+                  ),
                 if (_selected != null)
                   Positioned(
                     left: 12,
@@ -154,7 +284,7 @@ class MarkersMapPageState extends State<MarkersMapPage> {
                     bottom: 16,
                     child: _MarkDrawer(
                       mark: _selected!,
-                      onClose: () => setState(() => _selected = null),
+                      onClose: () => _select(null),
                       onOpenDetail: () async {
                         await Navigator.of(context).push(
                           MaterialPageRoute<void>(
@@ -196,11 +326,97 @@ class MarkersMapPageState extends State<MarkersMapPage> {
           touchPoiEnabled: false,
           onMapCreated: (AMapController controller) =>
               _controller = controller,
-          onTap: (_) {
-            if (_selected != null) setState(() => _selected = null);
-          },
+          onTap: (_) => _select(null),
         );
       },
+    );
+  }
+}
+
+/// 顶部的标签快捷筛选条。
+///
+/// 横向可滑，点一下只看这个标签下的标记，再点一下回到全部。
+class _TagFilterBar extends StatelessWidget {
+  const _TagFilterBar({
+    required this.tags,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final List<String> tags;
+  final String? selected;
+  final ValueChanged<String?> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 36,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        itemCount: tags.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (BuildContext context, int index) {
+          if (index == 0) {
+            return _Chip(
+              label: '全部',
+              color: AppColors.primary,
+              active: selected == null,
+              onTap: () => onSelect(null),
+            );
+          }
+          final String tag = tags[index - 1];
+          final bool active = tag == selected;
+          return _Chip(
+            label: tag,
+            color: AppColors.tagColor(tag),
+            active: active,
+            // 再点一下取消筛选，不用特地去够最左边的「全部」
+            onTap: () => onSelect(active ? null : tag),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  const _Chip({
+    required this.label,
+    required this.color,
+    required this.active,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: active ? color : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+          border: Border.all(
+            color: active ? color : AppColors.divider,
+          ),
+          boxShadow: kCardShadow,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+            color: active ? Colors.white : AppColors.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 }

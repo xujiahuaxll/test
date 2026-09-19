@@ -61,4 +61,73 @@ void main() {
     expect(find.text('已记录 1 个标记，可以回列表查看'), findsOneWidget);
     expect(find.text('1 个'), findsOneWidget);
   });
+
+  group('图标缓存键', () {
+    LocationMark markOf({
+      required String id,
+      List<String> tags = const <String>[],
+      List<String> photos = const <String>[],
+    }) {
+      final DateTime now = DateTime(2026, 5, 18);
+      return LocationMark(
+        id: id,
+        name: id,
+        latitude: 30,
+        longitude: 120,
+        createdAt: now,
+        updatedAt: now,
+        tags: tags,
+        photoPaths: photos,
+      );
+    }
+
+    test('同标签同封面的标记共用一张图，不必重画', () {
+      final LocationMark a = markOf(
+        id: 'a',
+        tags: <String>['美食'],
+        photos: <String>['p/1.jpg'],
+      );
+      final LocationMark b = markOf(
+        id: 'b',
+        tags: <String>['美食'],
+        photos: <String>['p/1.jpg'],
+      );
+      expect(
+        MarkersMapPageState.iconKeyOf(a, false),
+        MarkersMapPageState.iconKeyOf(b, false),
+      );
+    });
+
+    test('选中态、标签、封面任意一项不同都要各画一张', () {
+      final LocationMark base = markOf(
+        id: 'a',
+        tags: <String>['美食'],
+        photos: <String>['p/1.jpg'],
+      );
+      final String key = MarkersMapPageState.iconKeyOf(base, false);
+
+      expect(MarkersMapPageState.iconKeyOf(base, true), isNot(key));
+      expect(
+        MarkersMapPageState.iconKeyOf(
+          markOf(id: 'a', tags: <String>['风景'], photos: <String>['p/1.jpg']),
+          false,
+        ),
+        isNot(key),
+      );
+      expect(
+        MarkersMapPageState.iconKeyOf(
+          markOf(id: 'a', tags: <String>['美食'], photos: <String>['p/2.jpg']),
+          false,
+        ),
+        isNot(key),
+      );
+    });
+
+    test('没有标签、没有封面也要给出稳定的键', () {
+      expect(
+        MarkersMapPageState.iconKeyOf(markOf(id: 'a'), false),
+        MarkersMapPageState.iconKeyOf(markOf(id: 'b'), false),
+      );
+    });
+  });
 }

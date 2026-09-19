@@ -7,10 +7,12 @@ import 'package:x_amap_base/x_amap_base.dart';
 
 import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
+import '../services/city_directory.dart';
 import '../services/location_service.dart';
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
+import 'city_picker_page.dart';
 
 /// 在高德地图上手动选点。
 ///
@@ -70,6 +72,16 @@ class PickLocationPageState extends State<PickLocationPage> {
   List<AmapPlace> _tips = const <AmapPlace>[];
   bool _searching = false;
 
+  /// 搜索限定在哪个城市。null = 不限。
+  AmapDistrict? _city;
+
+  /// 定位/当前点所在的城市，城市选择器里放在最上面一行。
+  AmapDistrict? _locatedCity;
+
+  /// 用户手动选过城市之后就别再跟着地图跑了——
+  /// 他明摆着要搜外地，拖一下就被拽回本地城市会很恼人。
+  bool _cityPinned = false;
+
   Timer? _resolveDebounce;
   Timer? _searchDebounce;
 
@@ -105,6 +117,15 @@ class PickLocationPageState extends State<PickLocationPage> {
       widget.initialLongitude,
     );
     _refreshForCurrentPoint();
+    _warmUpCities();
+  }
+
+  /// 后台先把城市名单取回来，用户点城市入口时就不用干等一次网络请求。
+  void _warmUpCities() {
+    if (!_amapReady || CityDirectory.instance.cached != null) return;
+    CityDirectory.instance
+        .load(AmapRuntime.instance.effectiveKey)
+        .catchError((Object _) => const <CityGroup>[]);
   }
 
   @override
@@ -164,6 +185,7 @@ class PickLocationPageState extends State<PickLocationPage> {
         );
         placeName = places.bestName;
         address = places.formatAddress.isEmpty ? null : places.formatAddress;
+        _rememberCity(places.cityDistrict);
         // 周边搜索能给到「XX号楼」这一级，比逆地理编码的结果具体
         if (_nearby.isNotEmpty) placeName = _nearby.first.title;
       } on LocationFailure {
@@ -231,6 +253,41 @@ class PickLocationPageState extends State<PickLocationPage> {
     }
   }
 
+  /// 记下当前点落在哪个城市。
+  ///
+  /// 用户手动选过城市之后就不再跟着地图跑：他明摆着要搜外地，
+  /// 拖一下地图就被拽回本地城市会很恼人。
+  void _rememberCity(AmapDistrict? city) {
+    if (city == null || city.name.isEmpty) return;
+    _locatedCity = city;
+    if (!_cityPinned) _city = city;
+  }
+
+  Future<void> _openCityPicker() async {
+    FocusScope.of(context).unfocus();
+    final CityPickResult? picked = await CityPickerPage.show(
+      context,
+      current: _city,
+      located: _locatedCity,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _city = picked.city;
+      // 选过一次就算钉住了，包括「不限城市」——那也是一个明确的选择。
+      _cityPinned = true;
+    });
+    // 换了城市，旧的候选就不对了；还有词就按新范围重搜一遍。
+    final String keyword = _searchController.text;
+    if (keyword.trim().isEmpty) {
+      setState(() => _tips = const <AmapPlace>[]);
+    } else {
+      _onSearchChanged(keyword);
+    }
+  }
+
+  /// 城市入口上显示的字。还没解析出城市时先给个占位。
+  String get cityLabel => _city?.name.isNotEmpty == true ? _city!.name : '全国';
+
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
     if (value.trim().isEmpty) {
@@ -253,6 +310,10 @@ class PickLocationPageState extends State<PickLocationPage> {
           keyword: value,
           latitude: _gcj.latitude,
           longitude: _gcj.longitude,
+          // 不限城市时搜「人民医院」会把全国的都列出来，翻十页也找不到
+          // 身边那家；选了城市就只在城里找。
+          city: _city?.adcode ?? '',
+          cityLimit: _city != null,
         );
         if (!mounted) return;
         setState(() {
@@ -367,6 +428,8 @@ class PickLocationPageState extends State<PickLocationPage> {
               controller: _searchController,
               searching: _searching,
               tips: _tips,
+              cityLabel: cityLabel,
+              onPickCity: _openCityPicker,
               onChanged: _onSearchChanged,
               onPick: _selectPlace,
             ),
@@ -423,6 +486,8 @@ class _SearchBox extends StatelessWidget {
     required this.controller,
     required this.searching,
     required this.tips,
+    required this.cityLabel,
+    required this.onPickCity,
     required this.onChanged,
     required this.onPick,
   });
@@ -430,6 +495,10 @@ class _SearchBox extends StatelessWidget {
   final TextEditingController controller;
   final bool searching;
   final List<AmapPlace> tips;
+
+  /// 搜索限定的城市名，显示在输入框左边。
+  final String cityLabel;
+  final VoidCallback onPickCity;
   final ValueChanged<String> onChanged;
   final ValueChanged<AmapPlace> onPick;
 
@@ -443,9 +512,45 @@ class _SearchBox extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
           elevation: 2,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
+            padding: const EdgeInsets.only(left: 8, right: 12),
             child: Row(
               children: <Widget>[
+                // 城市入口：不收范围的话，搜「人民医院」会把全国的都列出来
+                InkWell(
+                  onTap: onPickCity,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 72),
+                          child: Text(
+                            cityLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const Icon(Icons.arrow_drop_down,
+                            size: 20, color: AppColors.textSecondary),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(
+                  width: 1,
+                  height: 18,
+                  margin: const EdgeInsets.symmetric(horizontal: 6),
+                  color: AppColors.divider,
+                ),
                 const Icon(Icons.search, size: 19,
                     color: AppColors.textTertiary),
                 const SizedBox(width: 8),

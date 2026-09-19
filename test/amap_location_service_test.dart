@@ -384,6 +384,32 @@ void main() {
       expect(called, isFalse, reason: '空关键词不该打扰原生侧');
     });
 
+    test('选了城市就把范围收进城里，不然搜「人民医院」会出来全国的', () async {
+      MethodCall? seen;
+      stub(payload: null, onCall: (MethodCall call) => seen = call);
+      await service.inputTips(
+        apiKey: key,
+        keyword: '人民医院',
+        city: '110100',
+        cityLimit: true,
+      );
+      final Map<Object?, Object?> args =
+          seen!.arguments as Map<Object?, Object?>;
+      expect(args['city'], '110100');
+      expect(args['cityLimit'], isTrue);
+    });
+
+    test('没给城市时不限定，否则会一条都搜不到', () async {
+      MethodCall? seen;
+      stub(payload: null, onCall: (MethodCall call) => seen = call);
+      // 就算调用方把 cityLimit 打开，没有城市可限也必须传 false
+      await service.inputTips(apiKey: key, keyword: '人民医院', cityLimit: true);
+      final Map<Object?, Object?> args =
+          seen!.arguments as Map<Object?, Object?>;
+      expect(args['city'], '');
+      expect(args['cityLimit'], isFalse);
+    });
+
     test('周边搜索把坐标、半径、关键词如实传下去', () async {
       MethodCall? seen;
       stub(payload: null, onCall: (MethodCall call) => seen = call);
@@ -445,6 +471,23 @@ void main() {
         <Object?, Object?>{'title': '甲28号楼', 'distance': 30},
       ]);
       expect(places.map((AmapPlace p) => p.title), <String>['甲28号楼']);
+    });
+
+    test('逆地理编码带回所在城市，直辖市用省名兜住', () async {
+      stub(payload: <Object?, Object?>{
+        'formatAddress': '北京市大兴区天河北路5号',
+        'province': '北京市',
+        'city': '',
+        'adCode': '110115',
+        'pois': <Object?>[],
+      });
+      final AmapPlaces places = await service.nearbyPlaces(
+        apiKey: key,
+        latitude: 39.738,
+        longitude: 116.341,
+      );
+      expect(places.cityDistrict!.name, '北京市');
+      expect(places.cityDistrict!.adcode, '110100');
     });
 
     test('原生报错时带上错误码，不吞掉', () async {

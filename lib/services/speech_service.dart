@@ -20,6 +20,12 @@ class SpeechService {
   bool _available = false;
   bool _wantListening = false;
   String _committed = '';
+
+  /// 连续起不来的次数。成功一次就清零。
+  int _restartAttempts = 0;
+
+  /// 连着这么多次都起不来才真的放弃，避免无限重试。
+  static const int _maxRestartAttempts = 6;
   ValueChanged<String>? _onText;
 
   bool get available => _available;
@@ -35,7 +41,9 @@ class SpeechService {
       _available = await _speech.initialize(
         onStatus: _handleStatus,
         onError: (dynamic error) {
-          if (_wantListening) _restart();
+          // 识别引擎报错未必是致命的（常见的是一段结束时的 no match /
+          // speech timeout），照样续听，由 _scheduleRestart 的次数上限兜底。
+          _scheduleRestart();
         },
       );
     } catch (_) {
@@ -53,6 +61,7 @@ class SpeechService {
     _onText = onText;
     _committed = initial;
     _wantListening = true;
+    _restartAttempts = 0;
     await _listen();
     return true;
   }
@@ -71,8 +80,13 @@ class SpeechService {
           pauseFor: const Duration(seconds: 15),
         ),
       );
+      // 起来了，之前的失败不再计数
+      _restartAttempts = 0;
     } catch (_) {
-      _wantListening = false;
+      // 一次起不来不代表以后都不行：上一段刚结束时引擎常常还在收尾。
+      // 这里原本直接把 _wantListening 置否，等于让后面所有续听都不再发生，
+      // 表现就是「说一句停几秒，只转了第一段，后面全没了」。
+      _scheduleRestart();
     }
   }
 
@@ -91,15 +105,41 @@ class SpeechService {
   void _handleStatus(String status) {
     // 系统在静音后会结束当前 session，这里自动续上，保证长时间录音不断流。
     if (status == 'done' || status == 'notListening') {
-      if (_wantListening) _restart();
+      _scheduleRestart();
     }
   }
 
-  void _restart() {
-    Future<void>.delayed(const Duration(milliseconds: 200), () {
-      if (_wantListening && !_speech.isListening) _listen();
+  /// 退避重试地把识别续上。
+  ///
+  /// 退避是必要的：刚结束的那一瞬间引擎多半还没释放，立刻重试必然失败。
+  /// 次数上限也是必要的：真的坏了就别无限空转。
+  void _scheduleRestart() {
+    if (!_wantListening) return;
+    if (shouldGiveUp(_restartAttempts)) {
+      _wantListening = false;
+      return;
+    }
+    final int attempt = _restartAttempts++;
+    Future<void>.delayed(restartDelayFor(attempt), () {
+      if (!_wantListening || _speech.isListening) return;
+      _listen();
     });
   }
+
+  /// 第 [attempt] 次重试等多久。指数退避，4 次之后封顶在 1.6 秒。
+  ///
+  /// 不能立刻重试：一段识别刚结束时引擎还在收尾，这会儿去 listen 必然
+  /// 抛错，抛一次就少一次重试机会，反而把能续上的也耗没了。
+  static Duration restartDelayFor(int attempt) {
+    final int capped = attempt < 0 ? 0 : (attempt > 3 ? 3 : attempt);
+    return Duration(milliseconds: 200 * (1 << capped));
+  }
+
+  /// 连着这么多次都起不来就别再空转了。
+  static bool shouldGiveUp(int attempts) => attempts >= _maxRestartAttempts;
+
+  /// 已经连着失败多少次没起来。界面可以据此提示用户。
+  int get restartAttempts => _restartAttempts;
 
   /// 停止识别，返回最终整段文字。
   Future<String> stop() async {
