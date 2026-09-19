@@ -23,6 +23,16 @@ class LocationFailure implements Exception {
   String toString() => 'LocationFailure($kind, $message)';
 }
 
+/// 这次坐标是谁给的。地址解析不出来时，界面据此告诉用户该查什么。
+enum LocationSource {
+  amap('高德定位'),
+  system('系统定位');
+
+  const LocationSource(this.label);
+
+  final String label;
+}
+
 /// 一次定位的结果。address 可能为空（逆地理编码失败时界面回落显示经纬度）。
 class LocationResult {
   const LocationResult({
@@ -30,12 +40,29 @@ class LocationResult {
     required this.longitude,
     required this.accuracy,
     this.address,
+    this.source = LocationSource.system,
+    this.note,
   });
 
   final double latitude;
   final double longitude;
   final double accuracy;
   final String? address;
+
+  /// 坐标的来源。
+  final LocationSource source;
+
+  /// 降级说明：回落了、或者地址没解析出来时的原因。正常情况下为 null。
+  final String? note;
+
+  LocationResult copyWith({String? address, String? note}) => LocationResult(
+        latitude: latitude,
+        longitude: longitude,
+        accuracy: accuracy,
+        address: address ?? this.address,
+        source: source,
+        note: note ?? this.note,
+      );
 }
 
 /// 系统定位（GPS / 网络定位）+ 系统逆地理编码，不接任何第三方地图服务。
@@ -85,11 +112,23 @@ class LocationService {
     // 它失败了再回落系统定位，不让用户卡在这一步。
     if (useAmap) {
       try {
-        return await AmapLocationService.instance.locate(
+        final LocationResult amap = await AmapLocationService.instance.locate(
           apiKey: AmapRuntime.instance.effectiveKey,
           accuracy: wanted,
           timeout: limit,
           needAddress: wantAddress,
+        );
+        if (!wantAddress || amap.address != null) return amap;
+
+        // 高德定过位了但没带回地址（拿到的是缓存结果、或者当时联不上
+        // 高德的解析服务）。再用系统逆地理编码补一次，别直接放弃。
+        final String? fallback =
+            await _reverseGeocode(amap.latitude, amap.longitude);
+        return amap.copyWith(
+          address: fallback,
+          note: fallback == null
+              ? '高德和系统都没解析出地址，通常是当时网络不通'
+              : null,
         );
       } on LocationFailure catch (failure) {
         // 权限类问题回落也没用，直接抛给界面
@@ -124,14 +163,38 @@ class LocationService {
       );
     }
 
+    final String? address = wantAddress
+        ? await _reverseGeocode(position.latitude, position.longitude)
+        : null;
+    final LocationFailure? amapFailure = _lastAmapFailure;
+
     return LocationResult(
       latitude: position.latitude,
       longitude: position.longitude,
       accuracy: position.accuracy,
-      address: wantAddress
-          ? await _reverseGeocode(position.latitude, position.longitude)
-          : null,
+      address: address,
+      source: LocationSource.system,
+      note: _systemNote(
+        amapFailure: amapFailure,
+        missingAddress: wantAddress && address == null,
+      ),
     );
+  }
+
+  /// 走到系统定位这一步时，把「为什么没用高德」「为什么没有地址」说清楚，
+  /// 否则界面只有一句「未获取到地址」，没人知道该查 Key 还是查网络。
+  static String? _systemNote({
+    required LocationFailure? amapFailure,
+    required bool missingAddress,
+  }) {
+    final List<String> parts = <String>[];
+    if (amapFailure != null) {
+      parts.add('高德定位失败（${amapFailure.message}），已回落系统定位');
+    }
+    if (missingAddress) {
+      parts.add('系统未能解析出地址，只记录了坐标');
+    }
+    return parts.isEmpty ? null : parts.join('；');
   }
 
   /// 组装取位置用的参数。Android 上强制走系统 LocationManager。

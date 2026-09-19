@@ -717,6 +717,16 @@ class _LocationCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (result?.note != null) ...<Widget>[
+                      const SizedBox(height: 6),
+                      Text(
+                        result!.note!,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: AppColors.accent),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       children: <Widget>[
@@ -725,7 +735,8 @@ class _LocationCard extends StatelessWidget {
                             result == null
                                 ? ''
                                 : '${result.latitude.toStringAsFixed(6)}, '
-                                    '${result.longitude.toStringAsFixed(6)}',
+                                    '${result.longitude.toStringAsFixed(6)}'
+                                    ' · ${result.source.label}',
                             style: Theme.of(context)
                                 .textTheme
                                 .bodySmall

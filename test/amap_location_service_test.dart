@@ -208,4 +208,46 @@ void main() {
       );
     });
   });
+
+  group('来源标记', () {
+    test('高德那条路径产出的结果标记为高德来源', () {
+      final LocationResult result =
+          AmapLocationService.parseResult(<Object?, Object?>{
+        'latitude': 30.0,
+        'longitude': 120.0,
+        'accuracy': 8,
+        'address': '某地',
+      });
+      expect(result.source, LocationSource.amap);
+      expect(result.source.label, '高德定位');
+      // 正常情况下不带降级说明
+      expect(result.note, isNull);
+    });
+
+    test('copyWith 补地址时保留来源', () {
+      final LocationResult amap =
+          AmapLocationService.parseResult(<Object?, Object?>{
+        'latitude': 30.0,
+        'longitude': 120.0,
+        'accuracy': 8,
+        'address': '',
+      });
+      expect(amap.address, isNull);
+
+      final LocationResult patched =
+          amap.copyWith(address: '系统补的地址');
+      expect(patched.address, '系统补的地址');
+      expect(patched.source, LocationSource.amap);
+      expect(patched.latitude, amap.latitude);
+    });
+
+    test('默认来源是系统定位', () {
+      const LocationResult result = LocationResult(
+        latitude: 30,
+        longitude: 120,
+        accuracy: 8,
+      );
+      expect(result.source, LocationSource.system);
+    });
+  });
 }

@@ -81,6 +81,7 @@ class AmapLocationService {
       longitude: wgs.longitude,
       accuracy: (raw['accuracy'] as num?)?.toDouble() ?? 0,
       address: address.isEmpty ? null : address,
+      source: LocationSource.amap,
     );
   }
 

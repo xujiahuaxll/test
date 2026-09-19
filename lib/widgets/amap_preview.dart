@@ -12,7 +12,7 @@ import 'fake_map.dart';
 ///
 /// 传进来的是库里存的 WGS-84 坐标，这里转成高德用的 GCJ-02 再显示。
 /// 没配 Key 或用户还没同意隐私声明时，退回本地示意图，不会白屏。
-class AMapPreview extends StatelessWidget {
+class AMapPreview extends StatefulWidget {
   const AMapPreview({
     super.key,
     required this.latitude,
@@ -28,6 +28,45 @@ class AMapPreview extends StatelessWidget {
 
   /// 降级到示意图时是否提示原因。
   final bool showHint;
+
+  @override
+  State<AMapPreview> createState() => _AMapPreviewState();
+}
+
+class _AMapPreviewState extends State<AMapPreview> {
+  AMapController? _controller;
+
+  /// 坐标变了要把镜头挪过去。
+  ///
+  /// AMapWidget 的 initialCameraPosition 顾名思义只在创建时生效，重建时
+  /// 传新坐标地图不会动——定位成功后地图会一直停在定位前的兜底位置，
+  /// 看起来就是「地图和坐标对不上」。
+  @override
+  void didUpdateWidget(AMapPreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.latitude != widget.latitude ||
+        oldWidget.longitude != widget.longitude) {
+      _moveCamera();
+    }
+  }
+
+  void _moveCamera() {
+    final AMapController? controller = _controller;
+    if (controller == null) return;
+    final LatLngPair gcj = CoordinateConverter.wgs84ToGcj02(
+      widget.latitude,
+      widget.longitude,
+    );
+    controller.moveCamera(
+      CameraUpdate.newLatLng(LatLng(gcj.latitude, gcj.longitude)),
+      animated: true,
+    );
+  }
+
+  double get latitude => widget.latitude;
+  double get longitude => widget.longitude;
+  double get zoom => widget.zoom;
+  bool get showHint => widget.showHint;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +92,11 @@ class AMapPreview extends StatelessWidget {
         return AMapWidget(
           initialCameraPosition:
               CameraPosition(target: target, zoom: zoom),
+          onMapCreated: (AMapController controller) {
+            _controller = controller;
+            // 地图晚于定位结果创建时，这里把镜头对上。
+            _moveCamera();
+          },
           mapType:
               amapTypeOf(SettingsController.instance.value.mapKind),
           markers: <Marker>{
