@@ -6,6 +6,8 @@ import 'package:location_marker/data/app_database.dart';
 import 'package:location_marker/data/settings_repository.dart';
 import 'package:location_marker/models/app_settings.dart';
 import 'package:location_marker/pages/settings_page.dart';
+import 'package:location_marker/config/amap_config.dart';
+import 'package:location_marker/services/amap_runtime.dart';
 import 'package:location_marker/services/media_store.dart';
 import 'package:location_marker/services/settings_controller.dart';
 import 'package:location_marker/theme/app_theme.dart';
@@ -35,6 +37,7 @@ void main() {
     MediaStore.instance.overrideRootForTesting(tempDir);
     // 每个用例都从空库读一次，把上一个用例留下的状态冲掉。
     await SettingsController.instance.load();
+    await AmapRuntime.instance.restore();
   });
 
   tearDown(() async {
@@ -161,5 +164,139 @@ void main() {
     }
 
     expect(find.text('没有需要清理的文件'), findsOneWidget);
+  });
+
+  group('高德 Key', () {
+    const String key = '0123456789abcdef0123456789abcdef';
+
+    test('没填 Key 时地图不可用', () {
+      expect(AmapRuntime.instance.hasKey, isFalse);
+      expect(AmapRuntime.instance.mapReady, isFalse);
+    });
+
+    testWidgets('未配置时这一行提示去填自己的 Key', (WidgetTester tester) async {
+      await pumpPage(tester);
+
+      expect(find.text('高德地图 Key'), findsOneWidget);
+      expect(find.text('未配置'), findsOneWidget);
+      // 隐私开关在没有 Key 时是置灰的
+      final Switch privacySwitch = tester.widget<Switch>(
+        find.descendant(
+          of: find
+              .ancestor(
+                of: find.text('同意高德隐私声明'),
+                matching: find.byType(Row),
+              )
+              .first,
+          matching: find.byType(Switch),
+        ),
+      );
+      expect(privacySwitch.onChanged, isNull);
+    });
+
+    testWidgets('填一个合法 Key 会落库并生效', (WidgetTester tester) async {
+      await pumpPage(tester);
+
+      await tester.tap(find.text('高德地图 Key'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), key);
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      // 刚填完 Key 还没同意过隐私声明，会补问一次
+      expect(find.text('隐私声明'), findsOneWidget);
+      await tester.tap(find.text('同意'));
+      await tester.pumpAndSettle();
+
+      expect(AmapRuntime.instance.userKey.value, key);
+      expect(AmapRuntime.instance.effectiveKey, key);
+      expect(AmapRuntime.instance.hasKey, isTrue);
+      expect(AmapRuntime.instance.usingBuildKey, isFalse);
+      expect(AmapRuntime.instance.mapReady, isTrue);
+
+      // 真的写进了数据库：重新读一次还在
+      final SettingsRepository repo =
+          SettingsRepository(db: AppDatabase.instance);
+      expect(
+        await repo.getString(SettingsRepository.keyAmapAndroidKey),
+        key,
+      );
+
+      // 界面上这一行跟着变成「已填」，并只露出首尾
+      expect(find.text('已填'), findsOneWidget);
+      expect(
+        find.text('正在用你自己填的 Key（${AmapConfig.mask(key)}）'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('格式不对的 Key 会被拦下，不写库', (WidgetTester tester) async {
+      await pumpPage(tester);
+
+      await tester.tap(find.text('高德地图 Key'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '这显然不是一个 key');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      // 弹窗还开着，并给出错误提示
+      expect(find.text('Key 应该是 32 位的字母数字，请核对后重填'), findsOneWidget);
+      expect(AmapRuntime.instance.userKey.value, isEmpty);
+
+      final SettingsRepository repo =
+          SettingsRepository(db: AppDatabase.instance);
+      expect(
+        await repo.getString(SettingsRepository.keyAmapAndroidKey),
+        isNull,
+      );
+    });
+
+    testWidgets('清空并保存会撤掉自己的 Key', (WidgetTester tester) async {
+      await AmapRuntime.instance.setUserKey(key);
+      await pumpPage(tester);
+      expect(find.text('已填'), findsOneWidget);
+
+      await tester.tap(find.text('高德地图 Key'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(AmapRuntime.instance.userKey.value, isEmpty);
+      expect(AmapRuntime.instance.hasKey, isFalse);
+      expect(find.text('未配置'), findsOneWidget);
+    });
+
+    testWidgets('取消不会改动已存的 Key', (WidgetTester tester) async {
+      await AmapRuntime.instance.setUserKey(key);
+      await pumpPage(tester);
+
+      await tester.tap(find.text('高德地图 Key'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'ffffffffffffffffffffffffffffffff');
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+
+      expect(AmapRuntime.instance.userKey.value, key);
+    });
+
+    testWidgets('恢复默认设置不会清掉用户的 Key', (WidgetTester tester) async {
+      await AmapRuntime.instance.setUserKey(key);
+      await pumpPage(tester);
+
+      await tester.tap(find.text('恢复默认设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('恢复'));
+      await tester.pumpAndSettle();
+
+      expect(AmapRuntime.instance.userKey.value, key);
+      final SettingsRepository repo =
+          SettingsRepository(db: AppDatabase.instance);
+      expect(
+        await repo.getString(SettingsRepository.keyAmapAndroidKey),
+        key,
+      );
+    });
   });
 }

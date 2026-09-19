@@ -10,6 +10,7 @@ import '../services/navigation_launcher.dart';
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
+import '../widgets/privacy_gate.dart';
 
 /// 系统设置：导航、地图、定位、录音转写、照片、列表排序都在这里配。
 ///
@@ -97,14 +98,8 @@ class _SettingsPageState extends State<SettingsPage> {
                 onChanged: (bool on) =>
                     _apply(settings.copyWith(showTraffic: on)),
               ),
+              _AmapKeyRow(onTap: _editAmapKey),
               _PrivacyRow(onChanged: _onPrivacyChanged),
-              _InfoRow(
-                title: '高德地图 Key',
-                value: AmapConfig.hasKey ? '已配置' : '未配置',
-                hint: AmapConfig.hasKey
-                    ? '打包时注入，地图与底图样式都可用'
-                    : '打包时没有注入 Key，地图会显示为本地示意图',
-              ),
             ],
           ),
           _Group(
@@ -360,6 +355,40 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// 打开 Key 输入弹窗，保存后让地图用新 Key 重建。
+  Future<void> _editAmapKey() async {
+    final AmapRuntime runtime = AmapRuntime.instance;
+    final _KeyEditResult? result = await showDialog<_KeyEditResult>(
+      context: context,
+      builder: (BuildContext dialogContext) =>
+          _AmapKeyDialog(initial: runtime.userKey.value),
+    );
+    if (result == null || !mounted) return;
+
+    await runtime.setUserKey(result.key);
+    if (!mounted) return;
+
+    if (result.key.isEmpty) {
+      _toast(AmapConfig.buildKey.isEmpty
+          ? '已清除，地图将显示为本地示意图'
+          : '已清除，回到打包时内置的 Key');
+      return;
+    }
+
+    // 刚填上 Key 但还没同意过隐私声明的话，这里补问一次，
+    // 否则地图仍然会白屏，用户会以为 Key 填错了。
+    if (!runtime.privacyAgreed.value) {
+      final bool agreed = await showAmapPrivacyDialog(context);
+      await runtime.setAgreed(agreed);
+      if (!mounted) return;
+      if (!agreed) {
+        _toast('Key 已保存；同意隐私声明后地图才会加载');
+        return;
+      }
+    }
+    _toast('Key 已保存，重新打开地图即可生效');
+  }
+
   Future<void> _onPrivacyChanged(bool agreed) async {
     await AmapRuntime.instance.setAgreed(agreed);
     if (!mounted) return;
@@ -430,6 +459,113 @@ class _SettingsPageState extends State<SettingsPage> {
   void _toast(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+/// Key 弹窗的返回值。key 为空串表示「清除，回到内置 Key」。
+class _KeyEditResult {
+  const _KeyEditResult(this.key);
+
+  final String key;
+}
+
+/// 填自己的高德 Key。
+///
+/// 同一个 APK 会发给不同的人，各自到高德开放平台申请自己的 Key
+/// （要绑定这个 App 的包名和签名 SHA1），填在这里，存在本机数据库。
+class _AmapKeyDialog extends StatefulWidget {
+  const _AmapKeyDialog({required this.initial});
+
+  final String initial;
+
+  @override
+  State<_AmapKeyDialog> createState() => _AmapKeyDialogState();
+}
+
+class _AmapKeyDialogState extends State<_AmapKeyDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final String value = _controller.text.trim();
+    // 允许清空：表示不再用自己的 Key。
+    if (value.isNotEmpty && !AmapConfig.looksLikeKey(value)) {
+      setState(() => _error = 'Key 应该是 32 位的字母数字，请核对后重填');
+      return;
+    }
+    Navigator.of(context).pop(_KeyEditResult(value));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('高德地图 Key'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '到高德开放平台申请一个 Android 平台的 Key，'
+            '申请时填这个 App 的包名 com.example.location_marker '
+            '和你安装包的签名 SHA1。\n\n'
+            'Key 只保存在这台手机上，不会上传。',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.6,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLines: 1,
+            autocorrect: false,
+            enableSuggestions: false,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+            onChanged: (_) {
+              if (_error != null) setState(() => _error = null);
+            },
+            decoration: InputDecoration(
+              hintText: '粘贴 32 位的 Key',
+              errorText: _error,
+              isDense: true,
+            ),
+            style: const TextStyle(fontSize: 14, letterSpacing: 0.4),
+          ),
+          if (widget.initial.isNotEmpty) ...<Widget>[
+            const SizedBox(height: 10),
+            const Text(
+              '清空后保存，就回到打包时内置的 Key（没有内置则地图显示为示意图）。',
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.5,
+                color: AppColors.textTertiary,
+              ),
+            ),
+          ],
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('保存'),
+        ),
+      ],
+    );
   }
 }
 
@@ -638,7 +774,38 @@ class _SwitchRow extends StatelessWidget {
   }
 }
 
-/// 高德隐私声明的开关。没配 Key 时地图本来就走示意图，开关置灰。
+/// 高德 Key 一行：显示当前 Key 的来源，点开可以填自己的。
+class _AmapKeyRow extends StatelessWidget {
+  const _AmapKeyRow({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final AmapRuntime runtime = AmapRuntime.instance;
+    return ListenableBuilder(
+      listenable: runtime.changes,
+      builder: (BuildContext context, _) {
+        final String hint;
+        if (!runtime.hasKey) {
+          hint = '还没有 Key，地图显示为本地示意图。点这里填自己的 Key';
+        } else if (runtime.usingBuildKey) {
+          hint = '正在用打包时内置的 Key。点这里可以换成自己的';
+        } else {
+          hint = '正在用你自己填的 Key（${AmapConfig.mask(runtime.effectiveKey)}）';
+        }
+        return _OptionRow(
+          title: '高德地图 Key',
+          subtitle: hint,
+          value: runtime.hasKey ? (runtime.usingBuildKey ? '内置' : '已填') : '未配置',
+          onTap: onTap,
+        );
+      },
+    );
+  }
+}
+
+/// 高德隐私声明的开关。没有可用 Key 时地图本来就走示意图，开关置灰。
 class _PrivacyRow extends StatelessWidget {
   const _PrivacyRow({required this.onChanged});
 
@@ -646,15 +813,16 @@ class _PrivacyRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: AmapRuntime.instance.privacyAgreed,
-      builder: (BuildContext context, bool agreed, _) => _SwitchRow(
+    final AmapRuntime runtime = AmapRuntime.instance;
+    return ListenableBuilder(
+      listenable: runtime.changes,
+      builder: (BuildContext context, _) => _SwitchRow(
         title: '同意高德隐私声明',
-        subtitle: AmapConfig.hasKey
+        subtitle: runtime.hasKey
             ? '高德要求取得同意后才能加载地图；关掉会退回本地示意图'
-            : '未配置高德 Key，地图始终显示为本地示意图',
-        value: agreed,
-        enabled: AmapConfig.hasKey,
+            : '还没有可用的高德 Key，地图始终显示为本地示意图',
+        value: runtime.privacyAgreed.value,
+        enabled: runtime.hasKey,
         onChanged: onChanged,
       ),
     );

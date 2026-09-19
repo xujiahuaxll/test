@@ -4,7 +4,6 @@ import 'package:amap_map/amap_map.dart';
 import 'package:flutter/material.dart';
 import 'package:x_amap_base/x_amap_base.dart';
 
-import '../config/amap_config.dart';
 import '../data/marker_repository.dart';
 import '../models/app_settings.dart';
 import '../models/location_mark.dart';
@@ -174,19 +173,20 @@ class MarkersMapPageState extends State<MarkersMapPage> {
   }
 
   Widget _buildMap() {
-    return ValueListenableBuilder<bool>(
-      valueListenable: AmapRuntime.instance.privacyAgreed,
-      builder: (BuildContext context, bool agreed, _) {
-        if (!AmapConfig.hasKey || !agreed) {
+    final AmapRuntime runtime = AmapRuntime.instance;
+    return ListenableBuilder(
+      listenable: runtime.changes,
+      builder: (BuildContext context, _) {
+        if (!runtime.mapReady) {
           return _MapUnavailable(
-            reason: AmapConfig.hasKey
+            reason: runtime.hasKey
                 ? '你还没有同意包含高德条款的隐私声明，地图无法加载'
-                : '还没有配置高德地图 Key，地图无法加载',
+                : '还没有配置高德地图 Key，可以到设置页填自己的 Key',
             markCount: _marks.length,
           );
         }
 
-        AmapRuntime.instance.initSdk(context);
+        runtime.initSdk(context);
         final AppSettings settings = SettingsController.instance.value;
         return AMapWidget(
           initialCameraPosition: _initialCamera(),

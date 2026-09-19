@@ -2,7 +2,6 @@ import 'package:amap_map/amap_map.dart';
 import 'package:flutter/material.dart';
 import 'package:x_amap_base/x_amap_base.dart';
 
-import '../config/amap_config.dart';
 import '../services/amap_runtime.dart';
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
@@ -32,19 +31,21 @@ class AMapPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: AmapRuntime.instance.privacyAgreed,
-      builder: (BuildContext context, bool agreed, _) {
-        if (!AmapConfig.hasKey || !agreed) {
+    final AmapRuntime runtime = AmapRuntime.instance;
+    // Key 和隐私同意状态任一变化都要重建：用户可能刚在设置页填完 Key。
+    return ListenableBuilder(
+      listenable: runtime.changes,
+      builder: (BuildContext context, _) {
+        if (!runtime.mapReady) {
           return _Fallback(
             latitude: latitude,
             longitude: longitude,
             showHint: showHint,
-            reason: AmapConfig.hasKey ? '待同意隐私声明' : '未配置高德 Key',
+            reason: runtime.hasKey ? '待同意隐私声明' : '未配置高德 Key',
           );
         }
 
-        AmapRuntime.instance.initSdk(context);
+        runtime.initSdk(context);
         final LatLngPair gcj =
             CoordinateConverter.wgs84ToGcj02(latitude, longitude);
         final LatLng target = LatLng(gcj.latitude, gcj.longitude);

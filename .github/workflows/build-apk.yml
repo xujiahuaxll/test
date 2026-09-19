@@ -48,6 +48,31 @@ jobs:
             echo "::warning::未配置 AMAP_ANDROID_KEY，APK 里的地图会显示为本地示意图"
           fi
 
+      # 配了 ANDROID_KEYSTORE_BASE64 就用固定签名，否则退回 debug 签名。
+      # 高德 Key 绑「包名 + 签名 SHA1」，debug keystore 由构建机现场生成，
+      # 每次换 runner 都是新的 SHA1，用户注册好的 Key 会失效。
+      - name: 写入签名配置
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64:-}" ]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次用 debug 签名，\
+          签名 SHA1 每次构建都会变；要让用户自己填高德 Key，需要固定签名"
+            exit 0
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/app/release.jks
+          cat > android/key.properties <<PROPS
+          storeFile=app/release.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          PROPS
+          echo "已启用固定的 release 签名"
+
       - name: 拉依赖
         run: flutter pub get
 
@@ -66,6 +91,24 @@ jobs:
             --dart-define=AMAP_ANDROID_KEY="${AMAP_ANDROID_KEY:-}" \
             --dart-define=AMAP_IOS_KEY="${AMAP_IOS_KEY:-}"
           ls -lh build/app/outputs/flutter-apk/
+
+      # 把签名证书的 SHA1 打出来：到高德开放平台建 Key 时要填这个值。
+      - name: 打印签名 SHA1
+        run: |
+          set -euo pipefail
+          if [ -f android/key.properties ]; then
+            store="android/app/release.jks"
+            pass=$(grep '^storePassword=' android/key.properties | cut -d= -f2-)
+            alias=$(grep '^keyAlias=' android/key.properties | cut -d= -f2-)
+            echo "签名来源：固定的 release keystore（每次构建一致）"
+          else
+            store="$HOME/.android/debug.keystore"
+            pass="android"
+            alias="androiddebugkey"
+            echo "签名来源：debug keystore（注意：每次构建都不一样）"
+          fi
+          keytool -list -v -keystore "$store" -storepass "$pass" -alias "$alias" \
+            2>/dev/null | grep -E 'SHA1|SHA256' || echo "读不到证书指纹"
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4

@@ -12,6 +12,11 @@ class SettingsRepository {
   /// 用户是否已同意包含高德隐私政策的隐私声明。
   static const String keyPrivacyAgreed = 'amap_privacy_agreed';
 
+  /// 用户自己填的高德 Key，两个平台分开存。
+  /// 不放进 AppSettings：「恢复默认设置」不应该把用户的 Key 也清掉。
+  static const String keyAmapAndroidKey = 'amap_android_key';
+  static const String keyAmapIosKey = 'amap_ios_key';
+
   final AppDatabase _appDb;
 
   Future<String?> getString(String key) async {

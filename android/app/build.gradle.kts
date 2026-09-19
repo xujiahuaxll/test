@@ -16,6 +16,21 @@ if (amapPropertiesFile.exists()) {
 }
 val amapAndroidKey: String = amapProperties.getProperty("AMAP_ANDROID_KEY") ?: ""
 
+// 正式签名从 android/key.properties 读（该文件和 keystore 都不进仓库）。
+// 没有这个文件就退回 debug 签名，本地 `flutter run --release` 照常能跑。
+//
+// 为什么要在意：高德 Key 绑定「包名 + 签名 SHA1」。debug keystore 是构建机
+// 现场生成的，换台机器（比如每次新的 CI runner）SHA1 就变，用户注册好的
+// Key 会立刻失效。要把同一个 APK 发给不同的人各自填 Key，签名必须固定。
+val keystoreProperties = Properties()
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseKeystore = keystorePropertiesFile.exists()
+if (hasReleaseKeystore) {
+    FileInputStream(keystorePropertiesFile).use { stream ->
+        keystoreProperties.load(stream)
+    }
+}
+
 android {
     namespace = "com.example.location_marker"
     compileSdk = flutter.compileSdkVersion
@@ -42,11 +57,27 @@ android {
         manifestPlaceholders["AMAP_ANDROID_KEY"] = amapAndroidKey
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = rootProject.file(
+                    keystoreProperties.getProperty("storeFile"),
+                )
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                // 没配正式签名时退回 debug，签名 SHA1 会随构建机变化
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

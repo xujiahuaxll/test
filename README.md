@@ -65,7 +65,7 @@
 | 地图 | 底图样式 | 标准 / 卫星 / 夜间，对应高德的 `MapType` |
 | 地图 | 实时路况 | 在全局地图上叠加拥堵图层 |
 | 地图 | 同意高德隐私声明 | 可以随时撤回；撤回后地图退回本地示意图。没配 Key 时置灰 |
-| 地图 | 高德地图 Key | 只读，显示打包时有没有注入 Key |
+| 地图 | 高德地图 Key | 点开填自己的 Key，存本机；空着则用打包时内置的 |
 | 定位 | 定位精度 | 高精度 / 均衡 / 省电，对应 `LocationAccuracy` 的三档 |
 | 定位 | 定位超时 | 10 / 20 / 30 / 60 秒 |
 | 定位 | 自动解析地址 | 关掉就只记经纬度，不调系统逆地理编码 |
@@ -87,9 +87,27 @@
 
 地图用官方插件 `amap_map`（旧的 `amap_flutter_map` 不支持 Dart 3）。三件事需要注意：
 
-### 1. 申请 Key 并配置（Key 不进仓库）
+Key 有两个来源，**运行时用户填的优先**：
 
-到 [高德开放平台](https://lbs.amap.com/) 新建 Key：Android 要填包名（`com.example.location_marker`）和签名 SHA1，iOS 要填 Bundle ID。然后：
+| 来源 | 存哪 | 适合 |
+| --- | --- | --- |
+| 用户在设置页填的 | 本机数据库的 `settings` 表 | 同一个 APK 发给不同的人，各自用自己的 Key |
+| 打包时注入的 | `--dart-define=AMAP_ANDROID_KEY=…` | 自己用、或给一批人配一个默认 Key |
+
+两个都没有时地图退回本地绘制的示意图（标注原因），App 其它功能不受影响。
+
+### 1. 用户在 App 里填自己的 Key
+
+设置 → 地图 → 高德地图 Key，点开粘贴 32 位的 Key，保存即生效
+（下次打开地图时 `MapsInitializer.setApiKey` 会收到新 Key）。清空保存则撤回，
+回到打包时内置的 Key。「恢复默认设置」不会清掉它。
+
+**这条路要求安装包的签名是固定的**，见下面的「签名」一节。
+
+### 2. 打包时注入默认 Key（Key 不进仓库）
+
+到 [高德开放平台](https://lbs.amap.com/) 新建 Key：Android 要填包名
+（`com.example.location_marker`）和签名 SHA1，iOS 要填 Bundle ID。然后：
 
 ```bash
 cp android/amap.properties.example android/amap.properties   # 填入自己的 Key
@@ -99,15 +117,39 @@ cp android/amap.properties.example android/amap.properties   # 填入自己的 K
 
 `android/amap.properties` 已在 `.gitignore` 里。脚本把同一份 Key 通过 `--dart-define` 传给 Dart 侧，Gradle 也从这个文件读同一个值注入 `AndroidManifest` 的 `com.amap.api.v2.apikey`，两边不会配歪。
 
-**没配 Key 也能跑**：地图组件会退回本地绘制的示意图（右下角标注原因），App 其它功能不受影响。
+### 3. 签名：让用户能注册自己的 Key 的前提
 
-### 2. 坐标系：库里存 WGS-84，显示时转 GCJ-02
+高德 Key 绑定的是「包名 + 签名 SHA1」。这个项目的 release 构建默认用
+**debug 签名**，而 debug keystore 是构建机现场生成的——每次换一台 CI runner
+就是一个新的 SHA1，用户按上一版 APK 注册的 Key 立刻失效。
+
+要把同一个 APK 发给不同的人各自填 Key，先准备一个固定的 keystore：
+
+```bash
+keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 \
+  -validity 10000 -alias release
+keytool -list -v -keystore release.jks -alias release | grep SHA1   # 记下这个值
+```
+
+本地构建：把 keystore 放好，写一份 `android/key.properties`
+（`storeFile` / `storePassword` / `keyAlias` / `keyPassword`，
+`storeFile` 相对 `android/` 目录）。这个文件和 `*.jks` 都在 `.gitignore` 里。
+
+CI 构建：在仓库 Settings → Secrets and variables → Actions 添加四个 Secret——
+`ANDROID_KEYSTORE_BASE64`（`base64 -w0 release.jks` 的输出）、
+`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。
+配了就自动启用，没配则退回 debug 签名并在构建日志里给出警告。
+
+不管走哪条路，构建日志的「打印签名 SHA1」一步都会输出这次用的证书指纹，
+把它填到高德开放平台建 Key 时的「SHA1」栏里。
+
+### 4. 坐标系：库里存 WGS-84，显示时转 GCJ-02
 
 系统定位（`geolocator`）给的是 WGS-84，高德用的是 GCJ-02（火星坐标）。直接把 WGS-84 的点画到高德地图上会**偏出几百米**。
 
 处理方式：数据库里统一存 WGS-84（标准坐标，复制出去能给任何地图用），只在与地图交互时转换——显示时 WGS-84 → GCJ-02，地图选点时 GCJ-02 → WGS-84（迭代反解到厘米级）。转换在 `lib/utils/coordinate.dart`，`test/coordinate_test.dart` 验证了偏移量级、往返精度、境外不偏移和偏移方向。
 
-### 3. 唤起第三方导航的坐标系
+### 5. 唤起第三方导航的坐标系
 
 各家地图收的坐标系不一样，传错会把人导到几百米外：
 
@@ -206,8 +248,9 @@ test/
   marker_list_page_test.dart    列表页 widget 测试
   markers_map_page_test.dart    全局地图页
   app_settings_test.dart        配置项的默认值、序列化与异常值回落
+  amap_config_test.dart         高德 Key 的取舍、格式校验与打码
   media_store_test.dart         媒体占用统计与孤儿文件清理
   settings_page_test.dart       设置页 widget 测试（改动要真的落库）
 ```
 
-跑一遍：`flutter analyze && flutter test`（63 个测试）。
+跑一遍：`flutter analyze && flutter test`（78 个测试）。
