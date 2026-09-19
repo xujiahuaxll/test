@@ -12,6 +12,7 @@ import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
+import '../widgets/place_picker_sheet.dart';
 import '../widgets/record_sheet.dart';
 import '../widgets/voice_player_bar.dart';
 import 'pick_location_page.dart';
@@ -138,6 +139,20 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
       _locateState = _LocateState.located;
       _locateError = null;
     });
+  }
+
+  /// 点地址名 -> 从附近 POI 里挑一个，坐标不变。
+  Future<void> _choosePlace() async {
+    final LocationResult? current = _location;
+    if (current == null) return;
+
+    final String? picked = await PlacePickerSheet.show(
+      context,
+      latitude: current.latitude,
+      longitude: current.longitude,
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _location = current.copyWith(address: picked));
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
@@ -336,6 +351,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
             failure: _locateError,
             onRetry: _locate,
             onPick: _pickOnMap,
+            onChoosePlace: _choosePlace,
           ),
           const SizedBox(height: 14),
           _nameSection(),
@@ -585,6 +601,7 @@ class _LocationCard extends StatelessWidget {
     required this.failure,
     required this.onRetry,
     required this.onPick,
+    required this.onChoosePlace,
   });
 
   final _LocateState state;
@@ -592,6 +609,7 @@ class _LocationCard extends StatelessWidget {
   final LocationFailure? failure;
   final VoidCallback onRetry;
   final VoidCallback onPick;
+  final VoidCallback onChoosePlace;
 
   @override
   Widget build(BuildContext context) {
@@ -708,11 +726,26 @@ class _LocationCard extends StatelessWidget {
                             size: 18, color: AppColors.primary),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: Text(
-                            result?.address?.isNotEmpty == true
-                                ? result!.address!
-                                : '未获取到地址（已记录坐标）',
-                            style: Theme.of(context).textTheme.titleMedium,
+                          child: GestureDetector(
+                            onTap: result == null ? null : onChoosePlace,
+                            child: Row(
+                              children: <Widget>[
+                                Flexible(
+                                  child: Text(
+                                    result?.address?.isNotEmpty == true
+                                        ? result!.address!
+                                        : '未获取到地址（已记录坐标）',
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ),
+                                if (result != null) ...<Widget>[
+                                  const SizedBox(width: 4),
+                                  const Icon(Icons.expand_more,
+                                      size: 18, color: AppColors.primary),
+                                ],
+                              ],
+                            ),
                           ),
                         ),
                       ],

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:location_marker/models/app_settings.dart';
 import 'package:location_marker/services/location_service.dart';
@@ -54,6 +55,66 @@ void main() {
       final Set<LocationAccuracy> mapped =
           LocateAccuracy.values.map(accuracyOf).toSet();
       expect(mapped.length, LocateAccuracy.values.length);
+    });
+  });
+
+  group('formatPlacemark', () {
+    Placemark mark({
+      String admin = '',
+      String locality = '',
+      String subLocality = '',
+      String thoroughfare = '',
+      String subThoroughfare = '',
+      String name = '',
+    }) =>
+        Placemark(
+          administrativeArea: admin,
+          locality: locality,
+          subLocality: subLocality,
+          thoroughfare: thoroughfare,
+          subThoroughfare: subThoroughfare,
+          name: name,
+        );
+
+    test('英文地址各段之间要有空格，不能糊成一串', () {
+      // 之前会拼成 BeijingDaxingTianhe North RoadNo.5
+      expect(
+        LocationService.formatPlacemark(mark(
+          admin: 'Beijing',
+          subLocality: 'Daxing',
+          thoroughfare: 'Tianhe North Road',
+          subThoroughfare: 'No.5',
+        )),
+        'Beijing Daxing Tianhe North Road No.5',
+      );
+    });
+
+    test('中文地址不加空格', () {
+      expect(
+        LocationService.formatPlacemark(mark(
+          admin: '北京市',
+          subLocality: '大兴区',
+          thoroughfare: '天河北路',
+          subThoroughfare: '5号',
+        )),
+        '北京市大兴区天河北路5号',
+      );
+    });
+
+    test('重复的段只保留一次', () {
+      expect(
+        LocationService.formatPlacemark(mark(
+          admin: '北京市',
+          locality: '北京市',
+          subLocality: '大兴区',
+        )),
+        '北京市大兴区',
+      );
+    });
+
+    test('全空时退回 name，name 也空则返回 null', () {
+      expect(LocationService.formatPlacemark(mark(name: '某大厦')), '某大厦');
+      expect(LocationService.formatPlacemark(mark()), isNull);
     });
   });
 }

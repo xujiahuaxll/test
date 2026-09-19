@@ -118,18 +118,8 @@ class LocationService {
           timeout: limit,
           needAddress: wantAddress,
         );
-        if (!wantAddress || amap.address != null) return amap;
-
-        // 高德定过位了但没带回地址（拿到的是缓存结果、或者当时联不上
-        // 高德的解析服务）。再用系统逆地理编码补一次，别直接放弃。
-        final String? fallback =
-            await _reverseGeocode(amap.latitude, amap.longitude);
-        return amap.copyWith(
-          address: fallback,
-          note: fallback == null
-              ? '高德和系统都没解析出地址，通常是当时网络不通'
-              : null,
-        );
+        if (!wantAddress) return amap;
+        return await _withPlaceName(amap);
       } on LocationFailure catch (failure) {
         // 权限类问题回落也没用，直接抛给界面
         if (failure.kind == LocationFailureKind.denied ||
@@ -178,6 +168,37 @@ class LocationService {
         amapFailure: amapFailure,
         missingAddress: wantAddress && address == null,
       ),
+    );
+  }
+
+  /// 把坐标换成一个像样的「地点名」。
+  ///
+  /// 定位结果自带的 address 只是一条街道地址（还经常为空），而用户要的是
+  /// 「某某大厦」「某某景区」。所以再走一次高德的逆地理编码，它会返回附近
+  /// 的 POI；都拿不到才退回系统逆地理编码。
+  Future<LocationResult> _withPlaceName(LocationResult located) async {
+    try {
+      final AmapPlaces places = await AmapLocationService.instance.nearbyPlaces(
+        apiKey: AmapRuntime.instance.effectiveKey,
+        latitude: located.latitude,
+        longitude: located.longitude,
+      );
+      final String? name = places.bestName;
+      if (name != null) return located.copyWith(address: name);
+    } on LocationFailure catch (failure) {
+      // 逆地理失败不影响已经拿到的坐标，记下原因继续往下兜底
+      if (located.address != null) {
+        return located.copyWith(note: '没能取到附近地点名（${failure.message}）');
+      }
+    }
+
+    if (located.address != null) return located;
+
+    final String? system =
+        await _reverseGeocode(located.latitude, located.longitude);
+    return located.copyWith(
+      address: system,
+      note: system == null ? '高德和系统都没解析出地址，通常是当时网络不通' : null,
     );
   }
 
@@ -270,13 +291,16 @@ class LocationService {
       mark.thoroughfare ?? '',
       mark.subThoroughfare ?? '',
     ];
-    final StringBuffer buffer = StringBuffer();
+    // 英文地址的各段之间必须留空格，否则会糊成
+    // 「Tianhe North RoadNo.5」这种读不通的东西；中文地址本来就不用空格。
+    final List<String> kept = <String>[];
     for (final String part in parts) {
       if (part.isEmpty) continue;
-      if (buffer.toString().contains(part)) continue;
-      buffer.write(part);
+      if (kept.any((String seen) => seen.contains(part))) continue;
+      kept.add(part);
     }
-    final String result = buffer.toString();
+    final bool hasLatin = kept.any((String p) => RegExp('[A-Za-z]').hasMatch(p));
+    final String result = kept.join(hasLatin ? ' ' : '');
     if (result.isNotEmpty) return result;
     final String fallback = mark.name ?? '';
     return fallback.isEmpty ? null : fallback;

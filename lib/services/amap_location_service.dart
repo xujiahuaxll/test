@@ -74,15 +74,77 @@ class AmapLocationService {
     final double gcjLat = (raw['latitude'] as num).toDouble();
     final double gcjLng = (raw['longitude'] as num).toDouble();
     final LatLngPair wgs = CoordinateConverter.gcj02ToWgs84(gcjLat, gcjLng);
-    final String address = (raw['address'] as String? ?? '').trim();
 
     return LocationResult(
       latitude: wgs.latitude,
       longitude: wgs.longitude,
       accuracy: (raw['accuracy'] as num?)?.toDouble() ?? 0,
-      address: address.isEmpty ? null : address,
+      address: pickDisplayAddress(raw),
       source: LocationSource.amap,
     );
+  }
+
+  /// 挑一个最像「地点」的名字给用户看。
+  ///
+  /// 用户要的是「某某大厦」「某某景点」，不是「某路某号」。所以先看 POI 名
+  /// 和 AOI 名（园区 / 小区 / 景区），都没有才退回街道地址。
+  static String? pickDisplayAddress(Map<Object?, Object?> raw) {
+    String read(String key) => (raw[key] as String? ?? '').trim();
+
+    for (final String key in <String>['poiName', 'aoiName']) {
+      final String value = read(key);
+      if (value.isNotEmpty) return value;
+    }
+    final String address = read('address');
+    if (address.isNotEmpty) return address;
+
+    // 只剩零散字段时自己拼一条，注意分隔，别糊成一串
+    final List<String> parts = <String>[
+      read('district'),
+      read('street'),
+      read('streetNum'),
+    ].where((String p) => p.isNotEmpty).toList();
+    return parts.isEmpty ? null : parts.join('');
+  }
+
+  /// 逆地理编码：拿坐标换格式化地址与附近 POI。
+  ///
+  /// 传 WGS-84（库里存的口径），原生侧用 GeocodeSearch.GPS 让高德自己换算。
+  Future<AmapPlaces> nearbyPlaces({
+    required String apiKey,
+    required double latitude,
+    required double longitude,
+    int radius = 200,
+  }) async {
+    final Map<Object?, Object?>? raw;
+    try {
+      raw = await channel.invokeMethod<Map<Object?, Object?>>(
+        'regeo',
+        <String, Object?>{
+          'apiKey': apiKey,
+          'latitude': latitude,
+          'longitude': longitude,
+          'radius': radius,
+        },
+      );
+    } on PlatformException catch (e) {
+      throw LocationFailure(
+        LocationFailureKind.unknown,
+        '获取附近地点失败：${e.message?.trim().isNotEmpty == true ? e.message : e.code}',
+      );
+    } on MissingPluginException {
+      throw const LocationFailure(
+        LocationFailureKind.unknown,
+        '当前平台不支持高德逆地理编码',
+      );
+    }
+    if (raw == null) {
+      throw const LocationFailure(
+        LocationFailureKind.unknown,
+        '逆地理编码没有返回结果',
+      );
+    }
+    return AmapPlaces.fromMap(raw);
   }
 
   /// 高德的错误码分类，界面据此给不同的操作。
@@ -116,5 +178,75 @@ class AmapLocationService {
       default:
         return info.isEmpty ? '高德定位失败（${e.code}）' : '高德定位失败：$info';
     }
+  }
+}
+
+/// 附近的一个地点。
+class AmapPlace {
+  const AmapPlace({
+    required this.title,
+    required this.distance,
+    this.snippet = '',
+  });
+
+  final String title;
+
+  /// 距离当前位置多少米。
+  final int distance;
+
+  /// 这个 POI 的街道地址，给用户区分同名地点用。
+  final String snippet;
+
+  String get distanceText =>
+      distance < 1000 ? '$distance 米' : '${(distance / 1000).toStringAsFixed(1)} 公里';
+}
+
+/// 一次逆地理编码的结果。
+class AmapPlaces {
+  const AmapPlaces({
+    required this.formatAddress,
+    required this.places,
+    this.building = '',
+    this.aoiName = '',
+  });
+
+  /// 「北京市大兴区天河北路5号」这种整句地址。
+  final String formatAddress;
+
+  /// 附近的 POI，已按距离从近到远排好。
+  final List<AmapPlace> places;
+
+  final String building;
+  final String aoiName;
+
+  /// 最贴切的一个地点名：楼宇 > 园区 > 最近的 POI > 格式化地址。
+  String? get bestName {
+    for (final String candidate in <String>[building, aoiName]) {
+      if (candidate.trim().isNotEmpty) return candidate.trim();
+    }
+    if (places.isNotEmpty && places.first.title.isNotEmpty) {
+      return places.first.title;
+    }
+    final String address = formatAddress.trim();
+    return address.isEmpty ? null : address;
+  }
+
+  static AmapPlaces fromMap(Map<Object?, Object?> raw) {
+    final List<Object?> rawPois =
+        (raw['pois'] as List<Object?>? ?? const <Object?>[]);
+    return AmapPlaces(
+      formatAddress: (raw['formatAddress'] as String? ?? '').trim(),
+      building: (raw['building'] as String? ?? '').trim(),
+      aoiName: (raw['aoiName'] as String? ?? '').trim(),
+      places: <AmapPlace>[
+        for (final Object? item in rawPois)
+          if (item is Map<Object?, Object?>)
+            AmapPlace(
+              title: (item['title'] as String? ?? '').trim(),
+              distance: (item['distance'] as num?)?.toInt() ?? 0,
+              snippet: (item['snippet'] as String? ?? '').trim(),
+            ),
+      ].where((AmapPlace p) => p.title.isNotEmpty).toList(growable: false),
+    );
   }
 }

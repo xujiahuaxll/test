@@ -202,7 +202,10 @@ MethodChannel：
   `implementation`，只进运行时不进使用方的编译类路径。版本要和插件里一致
 - 高德返回 GCJ-02，`AmapLocationService.parseResult` 转回 WGS-84 再存；
   不转的话保存的坐标会偏出几百米
-- 它直接带回中文地址，这一路不需要再调系统 `geocoding`
+- 定位后再走一次高德搜索 SDK 的逆地理编码（`GeocodeSearch`），取「地点名」
+  而不是「某路某号」：优先楼宇 > 园区/景区 > 最近的 POI > 整句地址。
+  搜索 SDK 的 Key 与隐私声明是独立的一套（`ServiceSettings`），不与地图、定位共用
+- 点地址可以从附近 POI 里另选一个（`PlacePickerSheet`），坐标不变
 - 只在「配了 Key 且已同意隐私声明」时启用；失败（除权限类外）自动回落系统定位
 
 写 Kotlin 时有两个坑：`AMapLocationClientOption` 的 setter 是 builder 风格
@@ -314,4 +317,4 @@ test/
   settings_page_test.dart       设置页 widget 测试（改动要真的落库）
 ```
 
-跑一遍：`flutter analyze && flutter test`（92 个测试）。
+跑一遍：`flutter analyze && flutter test`（108 个测试）。

@@ -250,4 +250,118 @@ void main() {
       expect(result.source, LocationSource.system);
     });
   });
+
+  group('地点名优先于街道地址', () {
+    test('有 POI 名就用 POI 名，不用「某路某号」', () {
+      expect(
+        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+          'poiName': '中铁吉盛物流大厦',
+          'aoiName': '天河北路产业园',
+          'address': '北京市大兴区天河北路5号',
+        }),
+        '中铁吉盛物流大厦',
+      );
+    });
+
+    test('没有 POI 名时退到 AOI（园区 / 小区 / 景区）', () {
+      expect(
+        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+          'poiName': '',
+          'aoiName': '天河北路产业园',
+          'address': '北京市大兴区天河北路5号',
+        }),
+        '天河北路产业园',
+      );
+    });
+
+    test('都没有才用整句地址', () {
+      expect(
+        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+          'address': '北京市大兴区天河北路5号',
+        }),
+        '北京市大兴区天河北路5号',
+      );
+    });
+
+    test('只剩零散字段时自己拼，且不会返回空串', () {
+      expect(
+        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+          'district': '大兴区',
+          'street': '天河北路',
+          'streetNum': '5号',
+        }),
+        '大兴区天河北路5号',
+      );
+      expect(
+        AmapLocationService.pickDisplayAddress(<Object?, Object?>{}),
+        isNull,
+      );
+    });
+  });
+
+  group('AmapPlaces', () {
+    Map<Object?, Object?> payload({
+      String building = '',
+      String aoiName = '',
+      String formatAddress = '北京市大兴区天河北路5号',
+      List<Map<String, Object?>> pois = const <Map<String, Object?>>[],
+    }) =>
+        <Object?, Object?>{
+          'formatAddress': formatAddress,
+          'building': building,
+          'aoiName': aoiName,
+          'pois': pois,
+        };
+
+    test('楼宇名最优先', () {
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        building: '中铁吉盛物流大厦',
+        aoiName: '某产业园',
+        pois: <Map<String, Object?>>[
+          <String, Object?>{'title': '永珍超市', 'distance': 30},
+        ],
+      ));
+      expect(places.bestName, '中铁吉盛物流大厦');
+    });
+
+    test('没有楼宇和园区时用最近的 POI', () {
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        pois: <Map<String, Object?>>[
+          <String, Object?>{'title': '永珍超市', 'distance': 30},
+          <String, Object?>{'title': '金羽毛羽球馆', 'distance': 180},
+        ],
+      ));
+      expect(places.bestName, '永珍超市');
+      expect(places.places.length, 2);
+    });
+
+    test('一个 POI 都没有时退回整句地址', () {
+      expect(AmapPlaces.fromMap(payload()).bestName, '北京市大兴区天河北路5号');
+      expect(
+        AmapPlaces.fromMap(payload(formatAddress: '')).bestName,
+        isNull,
+      );
+    });
+
+    test('标题为空的 POI 会被剔除，不会显示成空条目', () {
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        pois: <Map<String, Object?>>[
+          <String, Object?>{'title': '', 'distance': 10},
+          <String, Object?>{'title': '永珍超市', 'distance': 30},
+        ],
+      ));
+      expect(places.places.map((AmapPlace p) => p.title), <String>['永珍超市']);
+    });
+
+    test('距离按米 / 公里显示', () {
+      expect(
+        const AmapPlace(title: 'a', distance: 30).distanceText,
+        '30 米',
+      );
+      expect(
+        const AmapPlace(title: 'a', distance: 1500).distanceText,
+        '1.5 公里',
+      );
+    });
+  });
 }
