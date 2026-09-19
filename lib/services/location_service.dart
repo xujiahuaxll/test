@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/widgets.dart' show Locale;
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
@@ -50,13 +53,13 @@ class LocationService {
     final LocateAccuracy wanted = accuracy ?? settings.locateAccuracy;
     final bool wantAddress = resolveAddress ?? settings.reverseGeocode;
 
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      throw const LocationFailure(
-        LocationFailureKind.serviceDisabled,
-        '系统定位服务未开启，请在设置里打开定位',
-      );
-    }
-
+    // 先要权限，再谈定位服务。
+    //
+    // 原来是反过来的：一上来先问 Geolocator.isLocationServiceEnabled()。
+    // 那个调用在检测到 Google Play 服务时会去问 GMS 的 SettingsClient，
+    // 国行机上 GMS 往往缺失或不可用，调用失败就被当成「定位服务未开启」——
+    // 于是定位明明开着也报未开启，而且因为卡在第一步，权限框根本没机会弹。
+    // 服务到底开没开，交给下面真正取位置时由系统 LocationManager 来判断。
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -77,20 +80,23 @@ class LocationService {
     final Position position;
     try {
       position = await Geolocator.getCurrentPosition(
-        locationSettings: LocationSettings(
-          accuracy: _accuracyOf(wanted),
-          timeLimit: limit,
-        ),
+        locationSettings: buildLocationSettings(wanted, limit),
       );
     } on LocationServiceDisabledException {
+      // 这个是系统 LocationManager 给的结论（GPS 与网络定位都关着），可信。
       throw const LocationFailure(
         LocationFailureKind.serviceDisabled,
         '系统定位服务未开启，请在设置里打开定位',
       );
-    } catch (e) {
+    } on TimeoutException {
       throw LocationFailure(
         LocationFailureKind.timeout,
-        '定位超时，请到空旷处重试（$e）',
+        '定位超时（${limit.inSeconds} 秒），请到空旷处重试',
+      );
+    } catch (e) {
+      throw LocationFailure(
+        LocationFailureKind.unknown,
+        '定位失败：$e',
       );
     }
 
@@ -102,6 +108,29 @@ class LocationService {
           ? await _reverseGeocode(position.latitude, position.longitude)
           : null,
     );
+  }
+
+  /// 组装取位置用的参数。Android 上强制走系统 LocationManager。
+  ///
+  /// geolocator 检测到 Google Play 服务时会默认改用 FusedLocationProvider，
+  /// 那条路径上的定位服务判断依赖 GMS；国行机上 GMS 缺失或残缺会让它直接
+  /// 报错。系统 LocationManager 没有这个依赖，任何设备上都能用，代价是
+  /// 少了 GMS 的传感器融合，室内首次定位可能稍慢一点。
+  /// [android] 只为测试留的注入口，正常调用不传，取当前平台。
+  static LocationSettings buildLocationSettings(
+    LocateAccuracy accuracy,
+    Duration limit, {
+    bool? android,
+  }) {
+    final LocationAccuracy mapped = _accuracyOf(accuracy);
+    if (android ?? Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: mapped,
+        timeLimit: limit,
+        forceLocationManager: true,
+      );
+    }
+    return LocationSettings(accuracy: mapped, timeLimit: limit);
   }
 
   static LocationAccuracy _accuracyOf(LocateAccuracy accuracy) {
