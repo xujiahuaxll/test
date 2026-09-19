@@ -93,22 +93,30 @@ jobs:
           ls -lh build/app/outputs/flutter-apk/
 
       # 把签名证书的 SHA1 打出来：到高德开放平台建 Key 时要填这个值。
+      # 直接读打出来的 APK，而不是读 keystore 文件——这才是使用者实际拿到的签名。
       - name: 打印签名 SHA1
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
           if [ -f android/key.properties ]; then
-            store="android/app/release.jks"
-            pass=$(grep '^storePassword=' android/key.properties | cut -d= -f2-)
-            alias=$(grep '^keyAlias=' android/key.properties | cut -d= -f2-)
-            echo "签名来源：固定的 release keystore（每次构建一致）"
+            echo "签名来源：固定的 release keystore，每次构建一致"
           else
-            store="$HOME/.android/debug.keystore"
-            pass="android"
-            alias="androiddebugkey"
-            echo "签名来源：debug keystore（注意：每次构建都不一样）"
+            echo "::warning::本次是 debug 签名，SHA1 每次构建都会变；\
+          要让使用者各自填高德 Key，请配置 ANDROID_KEYSTORE_BASE64 等 Secret"
           fi
-          keytool -list -v -keystore "$store" -storepass "$pass" -alias "$alias" \
-            2>/dev/null | grep -E 'SHA1|SHA256' || echo "读不到证书指纹"
+
+          # minSdk 24 时 AGP 可能只做 v2/v3 签名，APK 里没有 META-INF 的 JAR 签名块，
+          # keytool -jarfile 会读不到，所以优先用 apksigner。
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          apksigner=$(find "$sdk/build-tools" -name apksigner -type f 2>/dev/null |
+            sort -V | tail -1)
+          if [ -n "$apksigner" ]; then
+            echo "用 $apksigner 读取："
+            "$apksigner" verify --print-certs "$apk" | grep -Ei 'SHA-1|SHA-256'
+          else
+            echo "没找到 apksigner，改用 keytool："
+            keytool -printcert -jarfile "$apk" | grep -E 'SHA1|SHA256'
+          fi
 
       - name: 上传 APK
         uses: actions/upload-artifact@v4
