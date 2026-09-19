@@ -103,11 +103,31 @@ Android 11+ 和 iOS 需要显式声明才能探测到这些应用是否安装，
 
 ## 运行
 
+需要 Flutter 3.47 或更高（`amap_map` 与 `geolocator_android` 要求 compileSdk 35+
+和新版 Flutter Gradle 插件）。
+
 ```bash
 flutter pub get
 ./scripts/run.sh       # 带上高德 Key 运行（等价于 flutter run）
 flutter run            # 不带 Key 也能跑，地图显示为本地示意图
 flutter test           # 单元测试 + widget 测试
+```
+
+## 打包 APK
+
+推到 `claude/location-marker-app-ui-cab78c` 分支会自动触发
+`.github/workflows/build-apk.yml`，产物在该次运行的 Artifacts 里（`location-marker-apk`）。
+也可以在 Actions 页面手动 `Run workflow`。
+
+想让包里的地图能用，先在仓库 Settings → Secrets and variables → Actions
+添加 `AMAP_ANDROID_KEY`（Key 要绑定包名 `com.example.location_marker`
+和签名 SHA1；CI 用的是 debug 签名，SHA1 与本地 debug keystore 不同，
+需要按 CI 的签名另配一个 Key，或改用自己的 release keystore）。
+
+本地打包：
+
+```bash
+./scripts/run.sh build apk --release
 ```
 
 首次运行会向系统申请定位、麦克风、相机/相册权限。权限声明已经配好：

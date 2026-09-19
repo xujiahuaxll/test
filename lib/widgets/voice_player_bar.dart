@@ -92,7 +92,7 @@ class _VoicePlayerBarState extends State<VoicePlayerBar> {
         vertical: widget.compact ? 10 : 14,
       ),
       decoration: BoxDecoration(
-        color: AppColors.primarySoft.withOpacity(0.55),
+        color: AppColors.primarySoft.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       child: _error != null

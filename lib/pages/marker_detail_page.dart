@@ -163,7 +163,7 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 10, vertical: 5),
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.35),
+                                color: Colors.black.withValues(alpha: 0.35),
                                 borderRadius:
                                     BorderRadius.circular(AppRadius.pill),
                               ),
@@ -324,7 +324,7 @@ class _GlassIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Material(
-        color: Colors.white.withOpacity(0.9),
+        color: Colors.white.withValues(alpha: 0.9),
         shape: const CircleBorder(),
         child: InkWell(
           onTap: onTap,

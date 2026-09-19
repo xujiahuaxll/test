@@ -35,8 +35,8 @@ class FakeMap extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: <Color>[
-                  Colors.black.withOpacity(0.02),
-                  Colors.black.withOpacity(0.16),
+                  Colors.black.withValues(alpha: 0.02),
+                  Colors.black.withValues(alpha: 0.16),
                 ],
               ),
             ),
@@ -68,7 +68,7 @@ class _MapPin extends StatelessWidget {
             border: Border.all(color: Colors.white, width: 3),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: AppColors.primaryDark.withOpacity(0.35),
+                color: AppColors.primaryDark.withValues(alpha: 0.35),
                 blurRadius: 12,
                 offset: const Offset(0, 4),
               ),
@@ -81,7 +81,7 @@ class _MapPin extends StatelessWidget {
           width: 10,
           height: 4,
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.18),
+            color: Colors.black.withValues(alpha: 0.18),
             borderRadius: BorderRadius.circular(4),
           ),
         ),
@@ -165,7 +165,7 @@ class _FakeMapPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = size.shortestSide * 0.055;
     final Paint subRoad = Paint()
-      ..color = Colors.white.withOpacity(0.85)
+      ..color = Colors.white.withValues(alpha: 0.85)
       ..style = PaintingStyle.stroke
       ..strokeWidth = size.shortestSide * 0.025;
 

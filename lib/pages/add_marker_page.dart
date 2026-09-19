@@ -467,7 +467,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                           width: 22,
                           height: 22,
                           decoration: BoxDecoration(
-                            color: AppColors.textPrimary.withOpacity(0.78),
+                            color: AppColors.textPrimary.withValues(alpha: 0.78),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white, width: 1.5),
                           ),
@@ -767,7 +767,7 @@ class _MapChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.94),
+        color: Colors.white.withValues(alpha: 0.94),
         borderRadius: BorderRadius.circular(AppRadius.pill),
         boxShadow: kCardShadow,
       ),
@@ -814,7 +814,7 @@ class _SelectableTag extends StatelessWidget {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.12) : AppColors.background,
+          color: selected ? color.withValues(alpha: 0.12) : AppColors.background,
           borderRadius: BorderRadius.circular(AppRadius.pill),
           border: Border.all(
             color: selected ? color : Colors.transparent,
@@ -887,10 +887,10 @@ class _AddPhotoButton extends StatelessWidget {
         width: 86,
         height: 86,
         decoration: BoxDecoration(
-          color: AppColors.primarySoft.withOpacity(0.55),
+          color: AppColors.primarySoft.withValues(alpha: 0.55),
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(
-            color: AppColors.primary.withOpacity(0.35),
+            color: AppColors.primary.withValues(alpha: 0.35),
             width: 1.2,
           ),
         ),
@@ -1000,9 +1000,9 @@ class _VoiceNoteArea extends StatelessWidget {
           width: double.infinity,
           padding: const EdgeInsets.symmetric(vertical: 26),
           decoration: BoxDecoration(
-            color: AppColors.primarySoft.withOpacity(0.5),
+            color: AppColors.primarySoft.withValues(alpha: 0.5),
             borderRadius: BorderRadius.circular(AppRadius.md),
-            border: Border.all(color: AppColors.primary.withOpacity(0.25)),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
           ),
           child: Column(
             children: <Widget>[
@@ -1062,7 +1062,7 @@ class _VoiceNoteArea extends StatelessWidget {
                 label: const Text('删除录音'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.danger,
-                  side: BorderSide(color: AppColors.danger.withOpacity(0.35)),
+                  side: BorderSide(color: AppColors.danger.withValues(alpha: 0.35)),
                   minimumSize: const Size.fromHeight(42),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppRadius.sm),

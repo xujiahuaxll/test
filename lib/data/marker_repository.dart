@@ -27,8 +27,10 @@ class MarkerRepository extends ChangeNotifier {
 
     final String? kw = keyword?.trim();
     if (kw != null && kw.isNotEmpty) {
-      where.add('(m.name LIKE ? OR m.note LIKE ? OR IFNULL(m.address, "") '
-          'LIKE ? OR IFNULL(m.transcript, "") LIKE ?)');
+      // 字符串字面量必须用单引号：新版 SQLite 不再把双引号当字符串，
+      // 会把 "" 解释成标识符并报 no such column。
+      where.add("(m.name LIKE ? OR m.note LIKE ? OR IFNULL(m.address, '') "
+          "LIKE ? OR IFNULL(m.transcript, '') LIKE ?)");
       final String like = '%$kw%';
       args.addAll(<Object?>[like, like, like, like]);
     }
