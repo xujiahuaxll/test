@@ -60,14 +60,14 @@ class SpeechService {
     try {
       await _speech.listen(
         onResult: _handleResult,
-        localeId: 'zh_CN',
         listenOptions: SpeechListenOptions(
           partialResults: true,
           cancelOnError: false,
           listenMode: ListenMode.dictation,
+          localeId: 'zh_CN',
+          listenFor: const Duration(minutes: 5),
+          pauseFor: const Duration(seconds: 15),
         ),
-        listenFor: const Duration(minutes: 5),
-        pauseFor: const Duration(seconds: 15),
       );
     } catch (_) {
       _wantListening = false;
