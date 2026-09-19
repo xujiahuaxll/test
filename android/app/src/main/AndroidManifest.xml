@@ -53,8 +53,7 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-        <!-- 高德 Key：值来自 android/amap.properties（不进仓库），
-             也可以改用 dart-define 在运行时传入，二选一即可 -->
+        <!-- 高德 Key：值来自 android/amap.properties（不进仓库） -->
         <meta-data
             android:name="com.amap.api.v2.apikey"
             android:value="${AMAP_ANDROID_KEY}" />
