@@ -23,7 +23,7 @@ dependencies:
   record: ^7.1.1
   just_audio: ^0.10.6
   speech_to_text: ^7.0.0
-  permission_handler: ^13.0.2
+  permission_handler: ^12.0.1
   uuid: ^4.4.0
   amap_map: ^1.0.15
   x_amap_base: ^1.0.3
