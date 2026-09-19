@@ -60,6 +60,7 @@ void main() {
       );
       expect(result.accuracy, 12.5);
       expect(result.address, '浙江省杭州市西湖区北山街');
+      expect(result.placeName, isNull);
     });
 
     test('直接用高德原始坐标会明显偏移，所以转换不能省', () {
@@ -251,41 +252,39 @@ void main() {
     });
   });
 
-  group('地点名优先于街道地址', () {
-    test('有 POI 名就用 POI 名，不用「某路某号」', () {
-      expect(
-        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
-          'poiName': '中铁吉盛物流大厦',
-          'aoiName': '天河北路产业园',
-          'address': '北京市大兴区天河北路5号',
-        }),
-        '中铁吉盛物流大厦',
-      );
+  group('地点名与详细地址分开', () {
+    test('POI 名做标题，街道地址做副标题', () {
+      const Map<Object?, Object?> raw = <Object?, Object?>{
+        'poiName': '中铁吉盛物流大厦',
+        'aoiName': '天河北路产业园',
+        'address': '北京市大兴区天河北路5号',
+      };
+      expect(AmapLocationService.pickPlaceName(raw), '中铁吉盛物流大厦');
+      expect(AmapLocationService.pickFullAddress(raw), '北京市大兴区天河北路5号');
     });
 
     test('没有 POI 名时退到 AOI（园区 / 小区 / 景区）', () {
       expect(
-        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+        AmapLocationService.pickPlaceName(<Object?, Object?>{
           'poiName': '',
           'aoiName': '天河北路产业园',
-          'address': '北京市大兴区天河北路5号',
         }),
         '天河北路产业园',
       );
     });
 
-    test('都没有才用整句地址', () {
+    test('两个都没有时地点名为空，界面会拿地址当标题', () {
       expect(
-        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+        AmapLocationService.pickPlaceName(<Object?, Object?>{
           'address': '北京市大兴区天河北路5号',
         }),
-        '北京市大兴区天河北路5号',
+        isNull,
       );
     });
 
-    test('只剩零散字段时自己拼，且不会返回空串', () {
+    test('地址缺失时用零散字段拼一条，全空返回 null', () {
       expect(
-        AmapLocationService.pickDisplayAddress(<Object?, Object?>{
+        AmapLocationService.pickFullAddress(<Object?, Object?>{
           'district': '大兴区',
           'street': '天河北路',
           'streetNum': '5号',
@@ -293,7 +292,7 @@ void main() {
         '大兴区天河北路5号',
       );
       expect(
-        AmapLocationService.pickDisplayAddress(<Object?, Object?>{}),
+        AmapLocationService.pickFullAddress(<Object?, Object?>{}),
         isNull,
       );
     });

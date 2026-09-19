@@ -5,6 +5,17 @@ import '../services/amap_runtime.dart';
 import '../services/location_service.dart';
 import '../theme/app_theme.dart';
 
+/// 用户选中的地点：名称做标题，地址做副标题。
+class PickedPlace {
+  const PickedPlace({required this.name, required this.address});
+
+  /// 「中铁吉盛」。选「使用完整地址」时为 null。
+  final String? name;
+
+  /// 「北京市大兴区天河北路5号」。
+  final String address;
+}
+
 /// 从附近的 POI 里挑一个作为这条标记的地点名。
 ///
 /// 逆地理编码给出的「某路某号」对人没什么意义，用户记得住的是
@@ -20,13 +31,13 @@ class PlacePickerSheet extends StatefulWidget {
   final double latitude;
   final double longitude;
 
-  /// 打开选择面板，返回用户选中的地点名；取消时返回 null。
-  static Future<String?> show(
+  /// 打开选择面板，返回用户选中的地点；取消时返回 null。
+  static Future<PickedPlace?> show(
     BuildContext context, {
     required double latitude,
     required double longitude,
   }) {
-    return showModalBottomSheet<String>(
+    return showModalBottomSheet<PickedPlace>(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
@@ -174,7 +185,9 @@ class _PlacePickerSheetState extends State<PlacePickerSheet> {
                 color: AppColors.textTertiary),
             title: Text(places.formatAddress),
             subtitle: const Text('使用完整地址'),
-            onTap: () => Navigator.of(context).pop(places.formatAddress),
+            onTap: () => Navigator.of(context).pop(
+              PickedPlace(name: null, address: places.formatAddress),
+            ),
           );
         }
         final AmapPlace place = items[index];
@@ -193,7 +206,14 @@ class _PlacePickerSheetState extends State<PlacePickerSheet> {
             place.distanceText,
             style: Theme.of(context).textTheme.bodySmall,
           ),
-          onTap: () => Navigator.of(context).pop(place.title),
+          onTap: () => Navigator.of(context).pop(
+            PickedPlace(
+              name: place.title,
+              address: place.snippet.isEmpty
+                  ? places.formatAddress
+                  : place.snippet,
+            ),
+          ),
         );
       },
     );

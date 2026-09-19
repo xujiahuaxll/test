@@ -134,4 +134,68 @@ void main() {
       expect((await settings.loadSettings()).mapKind, MapKind.satellite);
     });
   });
+
+  group('v2 -> v3 升级', () {
+    test('给 markers 补上 place_name 列，旧数据不丢', () async {
+      // 造一个 v2 的库：markers 表没有 place_name
+      final Database old = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(
+          version: 2,
+          onCreate: (Database db, int version) async {
+            await db.execute('''
+              CREATE TABLE ${AppDatabase.tableMarkers} (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                note TEXT NOT NULL DEFAULT '',
+                address TEXT,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                accuracy REAL,
+                audio_path TEXT,
+                audio_duration_ms INTEGER,
+                transcript TEXT,
+                waveform TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+              )
+            ''');
+          },
+        ),
+      );
+      await old.insert(AppDatabase.tableMarkers, <String, Object?>{
+        'id': 'm1',
+        'name': '老标记',
+        'address': '北京市大兴区天河北路5号',
+        'latitude': 39.9,
+        'longitude': 116.4,
+        'created_at': 1,
+        'updated_at': 1,
+      });
+
+      await AppDatabase.onUpgrade(old, 2, AppDatabase.version);
+
+      final List<Map<String, Object?>> rows =
+          await old.query(AppDatabase.tableMarkers);
+      expect(rows.single['name'], '老标记');
+      expect(rows.single['address'], '北京市大兴区天河北路5号');
+      // 新列存在且为空，界面会回落用地址当标题
+      expect(rows.single.containsKey('place_name'), isTrue);
+      expect(rows.single['place_name'], isNull);
+      await old.close();
+    });
+
+    test('重复执行升级不会报错（列已存在时跳过）', () async {
+      final Database db = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(
+          version: AppDatabase.version,
+          onCreate: AppDatabase.onCreate,
+        ),
+      );
+      await AppDatabase.addPlaceNameColumn(db);
+      await AppDatabase.addPlaceNameColumn(db);
+      await db.close();
+    });
+  });
 }

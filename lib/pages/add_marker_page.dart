@@ -146,13 +146,18 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
     final LocationResult? current = _location;
     if (current == null) return;
 
-    final String? picked = await PlacePickerSheet.show(
+    final PickedPlace? picked = await PlacePickerSheet.show(
       context,
       latitude: current.latitude,
       longitude: current.longitude,
     );
     if (picked == null || !mounted) return;
-    setState(() => _location = current.copyWith(address: picked));
+    setState(() {
+      _location = current.copyWith(
+        placeName: picked.name,
+        address: picked.address,
+      );
+    });
   }
 
   Future<void> _pickPhoto(ImageSource source) async {
@@ -283,6 +288,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
       name: name,
       tags: _selectedTags.toList(),
       address: location.address,
+      placeName: location.placeName,
       latitude: location.latitude,
       longitude: location.longitude,
       accuracy: location.accuracy,
@@ -732,9 +738,11 @@ class _LocationCard extends StatelessWidget {
                               children: <Widget>[
                                 Flexible(
                                   child: Text(
-                                    result?.address?.isNotEmpty == true
-                                        ? result!.address!
+                                    result?.title?.isNotEmpty == true
+                                        ? result!.title!
                                         : '未获取到地址（已记录坐标）',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
                                     style:
                                         Theme.of(context).textTheme.titleMedium,
                                   ),
@@ -750,6 +758,16 @@ class _LocationCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (result?.subtitle != null) ...<Widget>[
+                      const SizedBox(height: 4),
+                      Text(
+                        result!.subtitle!,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: AppColors.textSecondary),
+                      ),
+                    ],
                     if (result?.note != null) ...<Widget>[
                       const SizedBox(height: 6),
                       Text(

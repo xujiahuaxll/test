@@ -8,7 +8,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
 
   static const String fileName = 'location_marker.db';
-  static const int version = 2;
+  static const int version = 3;
 
   static const String tableMarkers = 'markers';
   static const String tableMarkerTags = 'marker_tags';
@@ -64,6 +64,7 @@ class AppDatabase {
         name TEXT NOT NULL,
         note TEXT NOT NULL DEFAULT '',
         address TEXT,
+        place_name TEXT,
         latitude REAL NOT NULL,
         longitude REAL NOT NULL,
         accuracy REAL,
@@ -132,6 +133,21 @@ class AppDatabase {
     if (oldVersion < 2) {
       await createSettingsTable(db);
     }
+    if (oldVersion < 3) {
+      await addPlaceNameColumn(db);
+    }
+  }
+
+  /// v3：地点名与详细地址分开存。
+  /// 「中铁吉盛」和「北京市大兴区天河北路5号」是两个东西，挤在一列里
+  /// 就没法一个做标题一个做副标题。旧数据这一列为 null，界面回落显示地址。
+  static Future<void> addPlaceNameColumn(Database db) async {
+    final List<Map<String, Object?>> columns =
+        await db.rawQuery('PRAGMA table_info($tableMarkers)');
+    final bool exists =
+        columns.any((Map<String, Object?> c) => c['name'] == 'place_name');
+    if (exists) return;
+    await db.execute('ALTER TABLE $tableMarkers ADD COLUMN place_name TEXT');
   }
 
   static Future<void> createSettingsTable(Database db) async {

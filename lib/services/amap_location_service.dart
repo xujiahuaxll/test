@@ -79,26 +79,29 @@ class AmapLocationService {
       latitude: wgs.latitude,
       longitude: wgs.longitude,
       accuracy: (raw['accuracy'] as num?)?.toDouble() ?? 0,
-      address: pickDisplayAddress(raw),
+      address: pickFullAddress(raw),
+      placeName: pickPlaceName(raw),
       source: LocationSource.amap,
     );
   }
 
-  /// 挑一个最像「地点」的名字给用户看。
-  ///
-  /// 用户要的是「某某大厦」「某某景点」，不是「某路某号」。所以先看 POI 名
-  /// 和 AOI 名（园区 / 小区 / 景区），都没有才退回街道地址。
-  static String? pickDisplayAddress(Map<Object?, Object?> raw) {
-    String read(String key) => (raw[key] as String? ?? '').trim();
-
+  /// 地点名：「某某大厦」「某某园区」。做标题用。
+  static String? pickPlaceName(Map<Object?, Object?> raw) {
     for (final String key in <String>['poiName', 'aoiName']) {
-      final String value = read(key);
+      final String value = (raw[key] as String? ?? '').trim();
       if (value.isNotEmpty) return value;
     }
+    return null;
+  }
+
+  /// 详细地址：「某路某号」。做副标题用。
+  static String? pickFullAddress(Map<Object?, Object?> raw) {
+    String read(String key) => (raw[key] as String? ?? '').trim();
+
     final String address = read('address');
     if (address.isNotEmpty) return address;
 
-    // 只剩零散字段时自己拼一条，注意分隔，别糊成一串
+    // 只剩零散字段时自己拼一条
     final List<String> parts = <String>[
       read('district'),
       read('street'),
@@ -128,10 +131,7 @@ class AmapLocationService {
         },
       );
     } on PlatformException catch (e) {
-      throw LocationFailure(
-        LocationFailureKind.unknown,
-        '获取附近地点失败：${e.message?.trim().isNotEmpty == true ? e.message : e.code}',
-      );
+      throw LocationFailure(LocationFailureKind.unknown, regeoMessage(e));
     } on MissingPluginException {
       throw const LocationFailure(
         LocationFailureKind.unknown,
@@ -145,6 +145,33 @@ class AmapLocationService {
       );
     }
     return AmapPlaces.fromMap(raw);
+  }
+
+  /// 把逆地理编码的错误翻成能照着做的话。
+  ///
+  /// 之前这里只显示原生传来的 message，把错误码丢了——而码才是区分
+  /// 「Key 不对」和「连不上网」的唯一依据。现在一律带上。
+  static String regeoMessage(PlatformException e) {
+    final int? code = int.tryParse(e.code.replaceFirst('regeo_', ''));
+    final String suffix = code == null ? '（${e.code}）' : '（错误码 $code）';
+    switch (code) {
+      case 1001:
+      case 1002:
+        return 'Key 无效或未授权，请核对 Key 与包名、签名 SHA1$suffix';
+      case 1003:
+        return 'Key 没有开通「搜索」服务，请到高德后台检查$suffix';
+      case 1802:
+      case 1804:
+      case 1806:
+        return '连不上高德服务器，请检查网络或关掉 VPN 再试$suffix';
+      case 1008:
+        return 'Key 对应的包名与本应用不一致$suffix';
+      case 1009:
+        return 'Key 对应的签名 SHA1 与本安装包不一致$suffix';
+      default:
+        final String info = (e.message ?? '').trim();
+        return info.isEmpty ? '获取附近地点失败$suffix' : info;
+    }
   }
 
   /// 高德的错误码分类，界面据此给不同的操作。
@@ -176,7 +203,9 @@ class AmapLocationService {
       case 'amap_7':
         return '高德 Key 鉴权失败，请核对 Key 与包名、签名 SHA1';
       default:
-        return info.isEmpty ? '高德定位失败（${e.code}）' : '高德定位失败：$info';
+        return info.isEmpty
+            ? '高德定位失败（${e.code}）'
+            : '高德定位失败：$info（${e.code}）';
     }
   }
 }

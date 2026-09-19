@@ -252,7 +252,7 @@ class _MarkDrawer extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        mark.addressOrCoordinate,
+                        mark.displayTitle,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall,

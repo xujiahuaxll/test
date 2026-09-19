@@ -81,7 +81,7 @@ class MarkerCard extends StatelessWidget {
                         const SizedBox(width: 3),
                         Expanded(
                           child: Text(
-                            mark.addressOrCoordinate,
+                            mark.displayTitle,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: text.bodySmall,

@@ -31,7 +31,8 @@
 
 表结构（`lib/data/app_database.dart`）：
 
-- `markers`：id、名称、备注、地址、经纬度、精度、录音路径、录音时长、转写文字、波形包络、创建/更新时间
+- `markers`：id、名称、备注、**地点名 + 详细地址**、经纬度、精度、录音路径、录音时长、转写文字、波形包络、创建/更新时间
+  （地点名「中铁吉盛」做标题，详细地址「北京市大兴区天河北路5号」做副标题；v3 加的列，旧数据为 null 时回落用地址当标题）
 - `marker_tags`：标记与标签的关联（带 position，保留选择顺序）
 - `marker_photos`：标记的照片（带 position，保留添加顺序）
 - `tags`：可选标签表，首次建库写入 8 个预置标签，用户自定义标签也会登记进来
@@ -317,4 +318,4 @@ test/
   settings_page_test.dart       设置页 widget 测试（改动要真的落库）
 ```
 
-跑一遍：`flutter analyze && flutter test`（108 个测试）。
+跑一遍：`flutter analyze && flutter test`（116 个测试）。

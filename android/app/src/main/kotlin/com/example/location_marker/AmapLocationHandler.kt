@@ -222,7 +222,13 @@ class AmapLocationHandler(private val context: Context) {
                         if (replied) return@post
                         replied = true
                         if (rCode != AMapException.CODE_AMAP_SUCCESS) {
-                            result.error("regeo_$rCode", "逆地理编码失败", null)
+                            // 码必须带上：1002 是 Key 无效，1806 是网络不通，
+                            // 处理方式完全不同，只说一句「失败」等于没说。
+                            result.error(
+                                "regeo_$rCode",
+                                "逆地理编码失败（错误码 $rCode）",
+                                null,
+                            )
                             return@post
                         }
                         val address = regeocodeResult?.regeocodeAddress

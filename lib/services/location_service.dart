@@ -40,6 +40,7 @@ class LocationResult {
     required this.longitude,
     required this.accuracy,
     this.address,
+    this.placeName,
     this.source = LocationSource.system,
     this.note,
   });
@@ -47,7 +48,12 @@ class LocationResult {
   final double latitude;
   final double longitude;
   final double accuracy;
+
+  /// 详细地址：「北京市大兴区天河北路5号」。
   final String? address;
+
+  /// 地点名：「中铁吉盛」。做标题，地址做副标题。
+  final String? placeName;
 
   /// 坐标的来源。
   final LocationSource source;
@@ -55,14 +61,29 @@ class LocationResult {
   /// 降级说明：回落了、或者地址没解析出来时的原因。正常情况下为 null。
   final String? note;
 
-  LocationResult copyWith({String? address, String? note}) => LocationResult(
+  LocationResult copyWith({
+    String? address,
+    String? placeName,
+    String? note,
+  }) =>
+      LocationResult(
         latitude: latitude,
         longitude: longitude,
         accuracy: accuracy,
         address: address ?? this.address,
+        placeName: placeName ?? this.placeName,
         source: source,
         note: note ?? this.note,
       );
+
+  /// 标题：地点名优先，没有就用地址。
+  String? get title => placeName?.isNotEmpty == true ? placeName : address;
+
+  /// 副标题：标题已经是地点名时才补详细地址。
+  String? get subtitle =>
+      placeName?.isNotEmpty == true && address?.isNotEmpty == true
+          ? address
+          : null;
 }
 
 /// 系统定位（GPS / 网络定位）+ 系统逆地理编码，不接任何第三方地图服务。
@@ -184,7 +205,12 @@ class LocationService {
         longitude: located.longitude,
       );
       final String? name = places.bestName;
-      if (name != null) return located.copyWith(address: name);
+      if (name != null) {
+        return located.copyWith(
+          placeName: name,
+          address: places.formatAddress.isEmpty ? null : places.formatAddress,
+        );
+      }
     } on LocationFailure catch (failure) {
       // 逆地理失败不影响已经拿到的坐标，记下原因继续往下兜底
       if (located.address != null) {
@@ -211,6 +237,15 @@ class LocationService {
     final List<String> parts = <String>[];
     if (amapFailure != null) {
       parts.add('高德定位失败（${amapFailure.message}），已回落系统定位');
+    } else {
+      // 压根没走高德那条路，说清楚是缺什么——上一版漏了这句，
+      // 结果界面显示「系统定位」却看不出原因。
+      final AmapRuntime runtime = AmapRuntime.instance;
+      if (!runtime.hasKey) {
+        parts.add('没有可用的高德 Key，用的是系统定位');
+      } else if (!runtime.privacyAgreed.value) {
+        parts.add('未同意高德隐私声明，用的是系统定位');
+      }
     }
     if (missingAddress) {
       parts.add('系统未能解析出地址，只记录了坐标');

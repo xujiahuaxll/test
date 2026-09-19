@@ -13,6 +13,7 @@ class LocationMark {
     required this.updatedAt,
     this.tags = const <String>[],
     this.address,
+    this.placeName,
     this.accuracy,
     this.photoPaths = const <String>[],
     this.note = '',
@@ -30,8 +31,13 @@ class LocationMark {
   final DateTime updatedAt;
   final List<String> tags;
 
-  /// 逆地理编码得到的地址，拿不到时为 null，界面回落显示经纬度。
+  /// 逆地理编码得到的详细地址（「北京市大兴区天河北路5号」），
+  /// 拿不到时为 null，界面回落显示经纬度。
   final String? address;
+
+  /// 地点名（「中铁吉盛」）。做标题用，地址做副标题。
+  /// 旧版本的数据没有这一列，为 null 时界面直接拿地址当标题。
+  final String? placeName;
   final double? accuracy;
   final List<String> photoPaths;
   final String note;
@@ -47,9 +53,18 @@ class LocationMark {
   String get coordinateText =>
       '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
 
-  String get addressOrCoordinate => address?.isNotEmpty == true
-      ? address!
-      : '未获取到地址 · $coordinateText';
+  /// 标题用：有地点名就用地点名，否则退回地址，再没有就显示坐标。
+  String get displayTitle {
+    if (placeName?.isNotEmpty == true) return placeName!;
+    if (address?.isNotEmpty == true) return address!;
+    return '未获取到地址 · $coordinateText';
+  }
+
+  /// 副标题用：标题已经是地点名时补一条详细地址，否则不重复显示。
+  String? get displaySubtitle {
+    if (placeName?.isNotEmpty != true) return null;
+    return address?.isNotEmpty == true ? address : null;
+  }
 
   String get durationText => formatDuration(audioDuration ?? Duration.zero);
 
@@ -82,6 +97,7 @@ class LocationMark {
     String? name,
     List<String>? tags,
     String? address,
+    String? placeName,
     double? latitude,
     double? longitude,
     double? accuracy,
@@ -98,6 +114,7 @@ class LocationMark {
       name: name ?? this.name,
       tags: tags ?? this.tags,
       address: address ?? this.address,
+      placeName: placeName ?? this.placeName,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       accuracy: accuracy ?? this.accuracy,
@@ -121,6 +138,7 @@ class LocationMark {
         'name': name,
         'note': note,
         'address': address,
+        'place_name': placeName,
         'latitude': latitude,
         'longitude': longitude,
         'accuracy': accuracy,
@@ -145,6 +163,7 @@ class LocationMark {
       name: row['name']! as String,
       note: (row['note'] as String?) ?? '',
       address: row['address'] as String?,
+      placeName: row['place_name'] as String?,
       latitude: (row['latitude']! as num).toDouble(),
       longitude: (row['longitude']! as num).toDouble(),
       accuracy: (row['accuracy'] as num?)?.toDouble(),
