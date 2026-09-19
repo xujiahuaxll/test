@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:record/record.dart';
 
+import '../models/app_settings.dart';
+import 'settings_controller.dart';
+
 /// 录音：用系统麦克风录成 m4a(AAC) 文件，存在应用私有目录里。
 class RecorderService {
   RecorderService._();
@@ -20,12 +23,14 @@ class RecorderService {
   }) =>
       _recorder.onAmplitudeChanged(interval);
 
+  /// 码率与采样率取设置页选的音质档位。
   Future<void> start(String absolutePath) async {
+    final AudioQuality quality = SettingsController.instance.value.audioQuality;
     await _recorder.start(
-      const RecordConfig(
+      RecordConfig(
         encoder: AudioEncoder.aacLc,
-        bitRate: 96000,
-        sampleRate: 44100,
+        bitRate: quality.bitRate,
+        sampleRate: quality.sampleRate,
         numChannels: 1,
       ),
       path: absolutePath,

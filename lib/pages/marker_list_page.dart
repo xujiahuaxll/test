@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 
 import '../data/marker_repository.dart';
 import '../models/location_mark.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/marker_card.dart';
 import '../widgets/nav_app_sheet.dart';
 import 'add_marker_page.dart';
 import 'marker_detail_page.dart';
 import 'markers_map_page.dart';
+import 'settings_page.dart';
 
 /// 首页：从本地数据库读取标记列表，支持关键词搜索与标签筛选。
 class MarkerListPage extends StatefulWidget {
@@ -35,12 +37,15 @@ class _MarkerListPageState extends State<MarkerListPage> {
   void initState() {
     super.initState();
     _repo.addListener(_reload);
+    // 设置页改了排序方式后列表要跟着重排。
+    SettingsController.instance.addListener(_reload);
     _reload();
   }
 
   @override
   void dispose() {
     _repo.removeListener(_reload);
+    SettingsController.instance.removeListener(_reload);
     _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -50,6 +55,7 @@ class _MarkerListPageState extends State<MarkerListPage> {
     final List<LocationMark> markers = await _repo.query(
       keyword: _keyword,
       tag: _activeTag == '全部' ? null : _activeTag,
+      sort: SettingsController.instance.value.markerSort,
     );
     final List<String> tags = await _repo.allTags();
     final int total = await _repo.count();
@@ -80,6 +86,13 @@ class _MarkerListPageState extends State<MarkerListPage> {
   Future<void> _openMap() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => const MarkersMapPage()),
+    );
+    await _reload();
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
     );
     await _reload();
   }
@@ -125,7 +138,11 @@ class _MarkerListPageState extends State<MarkerListPage> {
           child: CustomScrollView(
             slivers: <Widget>[
               SliverToBoxAdapter(
-                child: _Header(total: _total, onOpenMap: _openMap),
+                child: _Header(
+                  total: _total,
+                  onOpenMap: _openMap,
+                  onOpenSettings: _openSettings,
+                ),
               ),
               SliverToBoxAdapter(
                 child: _SearchBar(
@@ -200,10 +217,15 @@ class _MarkerListPageState extends State<MarkerListPage> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.total, required this.onOpenMap});
+  const _Header({
+    required this.total,
+    required this.onOpenMap,
+    required this.onOpenSettings,
+  });
 
   final int total;
   final VoidCallback onOpenMap;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -225,24 +247,50 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
-          Tooltip(
-            message: '在地图上查看全部',
-            child: Material(
-              color: AppColors.surface,
-              shape: const CircleBorder(),
-              child: InkWell(
-                onTap: onOpenMap,
-                customBorder: const CircleBorder(),
-                child: const SizedBox(
-                  width: 42,
-                  height: 42,
-                  child: Icon(Icons.map_outlined,
-                      size: 20, color: AppColors.primary),
-                ),
-              ),
-            ),
+          _RoundIconButton(
+            icon: Icons.map_outlined,
+            tooltip: '在地图上查看全部',
+            onTap: onOpenMap,
+          ),
+          const SizedBox(width: 8),
+          _RoundIconButton(
+            icon: Icons.settings_outlined,
+            tooltip: '设置',
+            onTap: onOpenSettings,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _RoundIconButton extends StatelessWidget {
+  const _RoundIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: AppColors.surface,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: onTap,
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            width: 42,
+            height: 42,
+            child: Icon(icon, size: 20, color: AppColors.primary),
+          ),
+        ),
       ),
     );
   }

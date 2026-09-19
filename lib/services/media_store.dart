@@ -4,6 +4,30 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
+/// photos/ 与 audio/ 的占用情况，给设置页展示。
+class MediaUsage {
+  const MediaUsage({
+    required this.photoCount,
+    required this.audioCount,
+    required this.bytes,
+  });
+
+  final int photoCount;
+  final int audioCount;
+  final int bytes;
+
+  int get fileCount => photoCount + audioCount;
+
+  /// 人类可读的体积，保留一位小数。
+  String get readableSize {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+}
+
 /// 照片与录音的本地落盘位置：应用私有目录下的 photos/ 与 audio/。
 /// 数据库里只存相对路径，取用时再拼当前的应用目录
 /// （iOS 沙盒目录会随版本变化，存绝对路径会失效）。
@@ -68,6 +92,74 @@ class MediaStore {
     if (await file.exists()) {
       await file.delete();
     }
+  }
+
+  /// 统计两个媒体目录的文件数与总体积。目录不存在时按空处理。
+  Future<MediaUsage> usage() async {
+    int photoCount = 0;
+    int audioCount = 0;
+    int bytes = 0;
+    for (final String name in <String>['photos', 'audio']) {
+      for (final File file in await _filesIn(name)) {
+        bytes += await file.length();
+        if (name == 'photos') {
+          photoCount++;
+        } else {
+          audioCount++;
+        }
+      }
+    }
+    return MediaUsage(
+      photoCount: photoCount,
+      audioCount: audioCount,
+      bytes: bytes,
+    );
+  }
+
+  /// 删掉库里已经没有引用的媒体文件。
+  ///
+  /// 删除标记时中途失败、或早期版本留下的文件会变成孤儿，一直占着空间。
+  /// [referenced] 传数据库里还在用的相对路径集合。
+  Future<MediaUsage> removeOrphans(Set<String> referenced) async {
+    final Directory dir = await root;
+    int photoCount = 0;
+    int audioCount = 0;
+    int bytes = 0;
+    for (final String name in <String>['photos', 'audio']) {
+      for (final File file in await _filesIn(name)) {
+        // 统一成数据库里那种 `photos/xxx.jpg` 的相对写法再比对。
+        final String relative = p.relative(file.path, from: dir.path);
+        if (referenced.contains(relative)) continue;
+        final int size = await file.length();
+        try {
+          await file.delete();
+        } catch (_) {
+          // 删不掉就跳过，不计入释放的空间。
+          continue;
+        }
+        bytes += size;
+        if (name == 'photos') {
+          photoCount++;
+        } else {
+          audioCount++;
+        }
+      }
+    }
+    return MediaUsage(
+      photoCount: photoCount,
+      audioCount: audioCount,
+      bytes: bytes,
+    );
+  }
+
+  Future<List<File>> _filesIn(String name) async {
+    final Directory dir = await root;
+    final Directory sub = Directory(p.join(dir.path, name));
+    if (!await sub.exists()) return <File>[];
+    return sub
+        .listSync(followLinks: false)
+        .whereType<File>()
+        .toList(growable: false);
   }
 
   Future<Directory> _subDir(String name) async {

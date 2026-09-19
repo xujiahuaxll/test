@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 
+import 'settings_controller.dart';
+
 /// 语音转文字：走系统自带的识别能力
 /// （iOS SFSpeechRecognizer / Android SpeechRecognizer），不接第三方云服务。
 ///
@@ -64,7 +66,7 @@ class SpeechService {
           partialResults: true,
           cancelOnError: false,
           listenMode: ListenMode.dictation,
-          localeId: 'zh_CN',
+          localeId: SettingsController.instance.value.speechLocale.id,
           listenFor: const Duration(minutes: 5),
           pauseFor: const Duration(seconds: 15),
         ),

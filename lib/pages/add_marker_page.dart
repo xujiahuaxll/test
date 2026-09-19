@@ -4,9 +4,11 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/marker_repository.dart';
+import '../models/app_settings.dart';
 import '../models/location_mark.dart';
 import '../services/location_service.dart';
 import '../services/media_store.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
@@ -140,10 +142,12 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
 
   Future<void> _pickPhoto(ImageSource source) async {
     try {
+      final PhotoQuality quality =
+          SettingsController.instance.value.photoQuality;
       final XFile? file = await _picker.pickImage(
         source: source,
-        imageQuality: 85,
-        maxWidth: 2048,
+        imageQuality: quality.quality,
+        maxWidth: quality.maxWidth,
       );
       if (file == null) return;
       final String relative = await MediaStore.instance.importPhoto(file.path);

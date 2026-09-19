@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 
+import '../models/app_settings.dart';
 import '../models/location_mark.dart';
 import '../services/media_store.dart';
 import 'app_database.dart';
@@ -19,8 +20,13 @@ class MarkerRepository extends ChangeNotifier {
 
   Future<Database> get _db => _appDb.database;
 
-  /// 列表查询：keyword 命中名称 / 备注 / 地址 / 转写文字，tag 为标签过滤。
-  Future<List<LocationMark>> query({String? keyword, String? tag}) async {
+  /// 列表查询：keyword 命中名称 / 备注 / 地址 / 转写文字，tag 为标签过滤，
+  /// sort 为排序方式（由调用方从设置里取，保持仓储本身无状态）。
+  Future<List<LocationMark>> query({
+    String? keyword,
+    String? tag,
+    MarkerSort sort = MarkerSort.newestFirst,
+  }) async {
     final Database db = await _db;
     final List<String> where = <String>[];
     final List<Object?> args = <Object?>[];
@@ -42,10 +48,22 @@ class MarkerRepository extends ChangeNotifier {
 
     final String sql = 'SELECT m.* FROM ${AppDatabase.tableMarkers} m'
         '${where.isEmpty ? '' : ' WHERE ${where.join(' AND ')}'}'
-        ' ORDER BY m.created_at DESC';
+        ' ORDER BY ${_orderBy(sort)}';
 
     final List<Map<String, Object?>> rows = await db.rawQuery(sql, args);
     return _hydrate(db, rows);
+  }
+
+  /// 按名称排序时再用创建时间兜底，保证同名条目的顺序稳定。
+  static String _orderBy(MarkerSort sort) {
+    switch (sort) {
+      case MarkerSort.newestFirst:
+        return 'm.created_at DESC';
+      case MarkerSort.oldestFirst:
+        return 'm.created_at ASC';
+      case MarkerSort.nameAsc:
+        return 'm.name COLLATE NOCASE ASC, m.created_at DESC';
+    }
   }
 
   Future<LocationMark?> findById(String id) async {
@@ -67,6 +85,28 @@ class MarkerRepository extends ChangeNotifier {
           await db.rawQuery('SELECT COUNT(*) FROM ${AppDatabase.tableMarkers}'),
         ) ??
         0;
+  }
+
+  /// 库里还在引用的媒体相对路径（照片 + 录音），用来找出孤儿文件。
+  Future<Set<String>> referencedMediaPaths() async {
+    final Database db = await _db;
+    final Set<String> paths = <String>{};
+    for (final Map<String, Object?> row in await db.query(
+      AppDatabase.tableMarkerPhotos,
+      columns: <String>['path'],
+    )) {
+      final Object? path = row['path'];
+      if (path is String && path.isNotEmpty) paths.add(path);
+    }
+    for (final Map<String, Object?> row in await db.query(
+      AppDatabase.tableMarkers,
+      columns: <String>['audio_path'],
+      where: 'audio_path IS NOT NULL',
+    )) {
+      final Object? path = row['audio_path'];
+      if (path is String && path.isNotEmpty) paths.add(path);
+    }
+    return paths;
   }
 
   /// 新增或更新一条标记（标签、照片一并覆盖写入）。

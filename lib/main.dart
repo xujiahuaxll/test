@@ -4,6 +4,7 @@ import 'data/marker_repository.dart';
 import 'pages/marker_list_page.dart';
 import 'services/amap_runtime.dart';
 import 'services/media_store.dart';
+import 'services/settings_controller.dart';
 import 'theme/app_theme.dart';
 import 'widgets/privacy_gate.dart';
 
@@ -15,6 +16,8 @@ Future<void> main() async {
   await MarkerRepository.instance.count();
   // 读取此前的高德隐私声明同意状态，已同意的话直接告知 SDK。
   await AmapRuntime.instance.restore();
+  // 读取用户在设置页存下的配置，之后各处同步取用。
+  await SettingsController.instance.load();
   runApp(const LocationMarkerApp());
 }
 

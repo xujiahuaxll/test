@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/location_mark.dart';
 import '../services/navigation_launcher.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 
 /// 选择用哪个地图应用导航；一个都没装时给出兜底（复制坐标）。
@@ -12,17 +13,25 @@ class NavAppSheet extends StatelessWidget {
   final LocationMark mark;
   final List<NavApp> apps;
 
-  /// 探测可用应用后弹出选择面板。只有一个可用时直接唤起，不多问一步。
+  /// 探测可用应用后弹出选择面板。
+  ///
+  /// 设置里指定了默认导航应用、且它确实装了的话直接唤起；
+  /// 只有一个可用时同样不多问一步。
   static Future<void> show(BuildContext context, LocationMark mark) async {
     final List<NavApp> apps =
         await NavigationLauncher.instance.availableApps(mark);
     if (!context.mounted) return;
 
-    if (apps.length == 1) {
-      final bool ok = await NavigationLauncher.instance.launch(apps.first, mark);
+    final NavApp? preferred = SettingsController.instance.value.defaultNavApp;
+    final NavApp? direct = preferred != null && apps.contains(preferred)
+        ? preferred
+        : (apps.length == 1 ? apps.first : null);
+
+    if (direct != null) {
+      final bool ok = await NavigationLauncher.instance.launch(direct, mark);
       if (!ok && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('唤起${apps.first.label}失败')),
+          SnackBar(content: Text('唤起${direct.label}失败')),
         );
       }
       return;
@@ -37,56 +46,59 @@ class NavAppSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
-      decoration: const BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppColors.divider,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '导航到「${mark.name}」',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 12),
-            if (apps.isEmpty)
-              _EmptyApps(mark: mark)
-            else
-              ...apps.map(
-                (NavApp app) => ListTile(
-                  leading: const Icon(Icons.navigation_outlined,
-                      color: AppColors.primary),
-                  title: Text(app.label),
-                  onTap: () async {
-                    Navigator.of(context).pop();
-                    await NavigationLauncher.instance.launch(app, mark);
-                  },
+    // 背景色画在 Material 上：里面的 ListTile 要在最近的 Material 上画水波纹，
+    // 用 Container 的 decoration 会把它整块盖住。
+    return Material(
+      color: AppColors.surface,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(4),
                 ),
               ),
-            const SizedBox(height: 6),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text(
-                '取消',
-                style: TextStyle(color: AppColors.textSecondary),
+              const SizedBox(height: 16),
+              Text(
+                '导航到「${mark.name}」',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-            ),
-          ],
+              const SizedBox(height: 12),
+              if (apps.isEmpty)
+                _EmptyApps(mark: mark)
+              else
+                ...apps.map(
+                  (NavApp app) => ListTile(
+                    leading: const Icon(Icons.navigation_outlined,
+                        color: AppColors.primary),
+                    title: Text(app.label),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await NavigationLauncher.instance.launch(app, mark);
+                    },
+                  ),
+                ),
+              const SizedBox(height: 6),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text(
+                  '取消',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

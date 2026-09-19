@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:location_marker/models/app_settings.dart';
 import 'package:location_marker/services/navigation_launcher.dart';
 import 'package:location_marker/utils/coordinate.dart';
 
@@ -104,5 +105,95 @@ void main() {
     // 能被正确解析回来，说明转义没问题
     expect(uri.queryParameters['poiname'], '老王&小李的店 #1');
     expect(uri.queryParameters['lat'], gcjLat);
+  });
+
+  group('出行方式', () {
+    test('高德驾车走 navi，其余方式走路线规划并带上 t 参数', () {
+      final Uri driving = NavigationLauncher.buildUri(
+        NavApp.amap,
+        latitude: lat,
+        longitude: lng,
+        name: name,
+      );
+      expect(driving.host, 'navi');
+
+      const Map<TravelMode, String> expected = <TravelMode, String>{
+        TravelMode.transit: '1',
+        TravelMode.walking: '2',
+        TravelMode.riding: '3',
+      };
+      expected.forEach((TravelMode mode, String t) {
+        final Uri uri = NavigationLauncher.buildUri(
+          NavApp.amap,
+          latitude: lat,
+          longitude: lng,
+          name: name,
+          mode: mode,
+        );
+        expect(uri.host, anyOf('route', 'path'));
+        expect(uri.queryParameters['t'], t);
+        // 路线规划用的是 dlat/dlon，坐标系声明不能丢
+        expect(uri.queryParameters['dlat'], gcjLat);
+        expect(uri.queryParameters['dlon'], gcjLng);
+        expect(uri.queryParameters['dev'], '0');
+        expect(uri.queryParameters['dname'], name);
+      });
+    });
+
+    test('百度 / 腾讯的出行方式参数逐个对上', () {
+      const Map<TravelMode, List<String>> expected =
+          <TravelMode, List<String>>{
+        TravelMode.driving: <String>['driving', 'drive'],
+        TravelMode.walking: <String>['walking', 'walk'],
+        TravelMode.riding: <String>['riding', 'bike'],
+        TravelMode.transit: <String>['transit', 'bus'],
+      };
+      expected.forEach((TravelMode mode, List<String> values) {
+        expect(
+          NavigationLauncher.buildUri(NavApp.baidu,
+                  latitude: lat, longitude: lng, name: name, mode: mode)
+              .queryParameters['mode'],
+          values[0],
+        );
+        expect(
+          NavigationLauncher.buildUri(NavApp.tencent,
+                  latitude: lat, longitude: lng, name: name, mode: mode)
+              .queryParameters['type'],
+          values[1],
+        );
+      });
+    });
+
+    test('苹果地图没有骑行，归到步行', () {
+      String dirflg(TravelMode mode) => NavigationLauncher.buildUri(
+            NavApp.appleMaps,
+            latitude: lat,
+            longitude: lng,
+            name: name,
+            mode: mode,
+          ).queryParameters['dirflg']!;
+
+      expect(dirflg(TravelMode.driving), 'd');
+      expect(dirflg(TravelMode.walking), 'w');
+      expect(dirflg(TravelMode.riding), 'w');
+      expect(dirflg(TravelMode.transit), 'r');
+    });
+
+    test('geo 协议没有出行方式参数，换方式链接也不变', () {
+      final Uri driving = NavigationLauncher.buildUri(
+        NavApp.system,
+        latitude: lat,
+        longitude: lng,
+        name: name,
+      );
+      final Uri walking = NavigationLauncher.buildUri(
+        NavApp.system,
+        latitude: lat,
+        longitude: lng,
+        name: name,
+        mode: TravelMode.walking,
+      );
+      expect(walking.toString(), driving.toString());
+    });
   });
 }

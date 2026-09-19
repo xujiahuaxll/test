@@ -6,8 +6,10 @@ import 'package:x_amap_base/x_amap_base.dart';
 
 import '../config/amap_config.dart';
 import '../data/marker_repository.dart';
+import '../models/app_settings.dart';
 import '../models/location_mark.dart';
 import '../services/amap_runtime.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
 import '../widgets/common.dart';
@@ -42,7 +44,9 @@ class MarkersMapPageState extends State<MarkersMapPage> {
   }
 
   Future<void> _load() async {
-    final List<LocationMark> marks = await _repo.query();
+    final List<LocationMark> marks = await _repo.query(
+      sort: SettingsController.instance.value.markerSort,
+    );
     if (!mounted) return;
     setState(() {
       _marks = marks;
@@ -183,9 +187,12 @@ class MarkersMapPageState extends State<MarkersMapPage> {
         }
 
         AmapRuntime.instance.initSdk(context);
+        final AppSettings settings = SettingsController.instance.value;
         return AMapWidget(
           initialCameraPosition: _initialCamera(),
           markers: _markers,
+          mapType: amapTypeOf(settings.mapKind),
+          trafficEnabled: settings.showTraffic,
           touchPoiEnabled: false,
           onMapCreated: (AMapController controller) =>
               _controller = controller,

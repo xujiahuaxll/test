@@ -7,6 +7,7 @@ import 'package:x_amap_base/x_amap_base.dart';
 
 import '../services/amap_runtime.dart';
 import '../services/location_service.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
 
@@ -127,6 +128,8 @@ class _PickLocationPageState extends State<PickLocationPage> {
                 target: LatLng(gcj.latitude, gcj.longitude),
                 zoom: 17,
               ),
+              mapType:
+                  amapTypeOf(SettingsController.instance.value.mapKind),
               onCameraMoveEnd: _onCameraMoveEnd,
               touchPoiEnabled: false,
               tiltGesturesEnabled: false,

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:location_marker/data/app_database.dart';
 import 'package:location_marker/data/marker_repository.dart';
+import 'package:location_marker/models/app_settings.dart';
 import 'package:location_marker/models/location_mark.dart';
 import 'package:location_marker/services/media_store.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -206,5 +207,95 @@ void main() {
     expect(loaded.hasVoice, isFalse);
     expect(loaded.waveform, isEmpty);
     expect(loaded.tags, isEmpty);
+  });
+
+  group('排序方式', () {
+    /// 造三条创建时间与名称都不同的标记，用来区分各种排序。
+    Future<void> seedForSort() async {
+      final List<(String, String, DateTime)> rows =
+          <(String, String, DateTime)>[
+        ('a', '北岸咖啡', DateTime(2026, 5, 1, 9)),
+        ('b', '西湖观景台', DateTime(2026, 5, 10, 9)),
+        ('c', '巷口面馆', DateTime(2026, 5, 20, 9)),
+      ];
+      for (final (String id, String name, DateTime at) in rows) {
+        await repo.save(LocationMark(
+          id: id,
+          name: name,
+          tags: const <String>[],
+          address: null,
+          latitude: 30.25,
+          longitude: 120.14,
+          accuracy: 8,
+          note: '',
+          photoPaths: const <String>[],
+          waveform: const <double>[],
+          createdAt: at,
+          updatedAt: at,
+        ));
+      }
+    }
+
+    Future<List<String>> idsSortedBy(MarkerSort sort) async =>
+        (await repo.query(sort: sort))
+            .map((LocationMark m) => m.id)
+            .toList(growable: false);
+
+    test('默认最近添加在前', () async {
+      await seedForSort();
+      expect(await idsSortedBy(MarkerSort.newestFirst), <String>['c', 'b', 'a']);
+      // 不传 sort 时与 newestFirst 一致
+      expect(
+        (await repo.query()).map((LocationMark m) => m.id).toList(),
+        <String>['c', 'b', 'a'],
+      );
+    });
+
+    test('可以改成最早添加在前', () async {
+      await seedForSort();
+      expect(await idsSortedBy(MarkerSort.oldestFirst), <String>['a', 'b', 'c']);
+    });
+
+    test('按名称排序时顺序稳定', () async {
+      await seedForSort();
+      final List<String> names = (await repo.query(sort: MarkerSort.nameAsc))
+          .map((LocationMark m) => m.name)
+          .toList(growable: false);
+      // 同一份数据重复查询结果一致
+      expect(
+        (await repo.query(sort: MarkerSort.nameAsc))
+            .map((LocationMark m) => m.name)
+            .toList(),
+        names,
+      );
+      expect(names.length, 3);
+    });
+
+    test('排序与搜索、标签过滤同时生效', () async {
+      await seedForSort();
+      final List<LocationMark> found = await repo.query(
+        keyword: '咖啡',
+        sort: MarkerSort.oldestFirst,
+      );
+      expect(found.map((LocationMark m) => m.id), <String>['a']);
+    });
+  });
+
+  test('referencedMediaPaths 列出照片与录音的相对路径', () async {
+    await repo.save(buildMark(
+      id: 'm1',
+      photos: <String>['photos/a.jpg', 'photos/b.jpg'],
+      audioPath: 'audio/v1.m4a',
+    ));
+    await repo.save(buildMark(id: 'm2', photos: <String>['photos/c.jpg']));
+
+    expect(
+      await repo.referencedMediaPaths(),
+      <String>{'photos/a.jpg', 'photos/b.jpg', 'photos/c.jpg', 'audio/v1.m4a'},
+    );
+
+    // 删掉一条后它的媒体路径不再被引用
+    await repo.delete((await repo.findById('m1'))!);
+    expect(await repo.referencedMediaPaths(), <String>{'photos/c.jpg'});
   });
 }

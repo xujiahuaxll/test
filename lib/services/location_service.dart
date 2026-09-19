@@ -2,6 +2,9 @@ import 'package:flutter/widgets.dart' show Locale;
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../models/app_settings.dart';
+import 'settings_controller.dart';
+
 /// 定位失败的原因，界面按类型给不同的提示与操作。
 enum LocationFailureKind { serviceDisabled, denied, deniedForever, timeout, unknown }
 
@@ -36,9 +39,17 @@ class LocationService {
 
   static final LocationService instance = LocationService._();
 
+  /// 精度、超时、是否解析地址都取设置页的值；传参可覆盖，方便测试。
   Future<LocationResult> current({
-    Duration timeout = const Duration(seconds: 20),
+    Duration? timeout,
+    LocateAccuracy? accuracy,
+    bool? resolveAddress,
   }) async {
+    final AppSettings settings = SettingsController.instance.value;
+    final Duration limit = timeout ?? settings.locateTimeout;
+    final LocateAccuracy wanted = accuracy ?? settings.locateAccuracy;
+    final bool wantAddress = resolveAddress ?? settings.reverseGeocode;
+
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw const LocationFailure(
         LocationFailureKind.serviceDisabled,
@@ -67,8 +78,8 @@ class LocationService {
     try {
       position = await Geolocator.getCurrentPosition(
         locationSettings: LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: timeout,
+          accuracy: _accuracyOf(wanted),
+          timeLimit: limit,
         ),
       );
     } on LocationServiceDisabledException {
@@ -87,8 +98,21 @@ class LocationService {
       latitude: position.latitude,
       longitude: position.longitude,
       accuracy: position.accuracy,
-      address: await _reverseGeocode(position.latitude, position.longitude),
+      address: wantAddress
+          ? await _reverseGeocode(position.latitude, position.longitude)
+          : null,
     );
+  }
+
+  static LocationAccuracy _accuracyOf(LocateAccuracy accuracy) {
+    switch (accuracy) {
+      case LocateAccuracy.high:
+        return LocationAccuracy.high;
+      case LocateAccuracy.balanced:
+        return LocationAccuracy.medium;
+      case LocateAccuracy.powerSave:
+        return LocationAccuracy.low;
+    }
   }
 
   /// 逆地理编码走系统能力（iOS CLGeocoder / Android Geocoder），

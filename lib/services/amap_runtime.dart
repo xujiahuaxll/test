@@ -4,6 +4,19 @@ import 'package:x_amap_base/x_amap_base.dart';
 
 import '../config/amap_config.dart';
 import '../data/settings_repository.dart';
+import '../models/app_settings.dart';
+
+/// 把设置里的底图样式翻译成高德的 MapType。
+MapType amapTypeOf(MapKind kind) {
+  switch (kind) {
+    case MapKind.standard:
+      return MapType.normal;
+    case MapKind.satellite:
+      return MapType.satellite;
+    case MapKind.night:
+      return MapType.night;
+  }
+}
 
 /// 高德 SDK 的运行时状态。
 ///

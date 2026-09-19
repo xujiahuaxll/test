@@ -4,6 +4,7 @@ import 'package:x_amap_base/x_amap_base.dart';
 
 import '../config/amap_config.dart';
 import '../services/amap_runtime.dart';
+import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
 import 'fake_map.dart';
@@ -51,6 +52,8 @@ class AMapPreview extends StatelessWidget {
         return AMapWidget(
           initialCameraPosition:
               CameraPosition(target: target, zoom: zoom),
+          mapType:
+              amapTypeOf(SettingsController.instance.value.mapKind),
           markers: <Marker>{
             Marker(position: target, infoWindowEnable: false),
           },

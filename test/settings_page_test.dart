@@ -1,0 +1,165 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:location_marker/data/app_database.dart';
+import 'package:location_marker/data/settings_repository.dart';
+import 'package:location_marker/models/app_settings.dart';
+import 'package:location_marker/pages/settings_page.dart';
+import 'package:location_marker/services/media_store.dart';
+import 'package:location_marker/services/settings_controller.dart';
+import 'package:location_marker/theme/app_theme.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+/// 设置页跑在真实的内存数据库上：改一项要真的落库，重新读还在。
+void main() {
+  late Database db;
+  late Directory tempDir;
+
+  setUpAll(() {
+    sqfliteFfiInit();
+    // widget test 在 fake async 下跑，必须用不带后台 isolate 的工厂。
+    databaseFactory = databaseFactoryFfiNoIsolate;
+  });
+
+  setUp(() async {
+    db = await databaseFactoryFfiNoIsolate.openDatabase(
+      inMemoryDatabasePath,
+      options: OpenDatabaseOptions(
+        version: AppDatabase.version,
+        onCreate: AppDatabase.onCreate,
+      ),
+    );
+    AppDatabase.instance.overrideForTesting(db);
+    tempDir = await Directory.systemTemp.createTemp('settings_page_test');
+    MediaStore.instance.overrideRootForTesting(tempDir);
+    // 每个用例都从空库读一次，把上一个用例留下的状态冲掉。
+    await SettingsController.instance.load();
+  });
+
+  tearDown(() async {
+    await db.close();
+    if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+  });
+
+  /// 设置项比默认测试窗口高得多，ListView 只会建可见的那几行。
+  /// 把视口撑高让整页一次渲染完，省掉每个断言前的滚动。
+  Future<void> pumpPage(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1000, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      MaterialApp(theme: AppTheme.light(), home: const SettingsPage()),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  /// 点开某一行的单选面板，再选中其中一个选项。
+  Future<void> choose(
+    WidgetTester tester,
+    String row,
+    String option,
+  ) async {
+    await tester.tap(find.text(row));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(option).last);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('各组配置项都渲染出来，并显示当前值', (WidgetTester tester) async {
+    await pumpPage(tester);
+
+    for (final String group in <String>['导航', '地图', '定位', '备注与录音', '照片']) {
+      expect(find.text(group), findsOneWidget, reason: '缺少「$group」分组');
+    }
+
+    expect(find.text('默认导航应用'), findsOneWidget);
+    // 默认是「每次询问」
+    expect(find.text('每次询问'), findsOneWidget);
+    expect(find.text('驾车'), findsOneWidget);
+  });
+
+  testWidgets('改出行方式会落库，重新读还在', (WidgetTester tester) async {
+    await pumpPage(tester);
+    await choose(tester, '出行方式', '步行');
+
+    expect(SettingsController.instance.value.travelMode, TravelMode.walking);
+
+    final AppSettings reloaded =
+        await SettingsRepository(db: AppDatabase.instance).loadSettings();
+    expect(reloaded.travelMode, TravelMode.walking);
+    // 界面上的当前值也跟着变了
+    expect(find.text('步行'), findsOneWidget);
+  });
+
+  testWidgets('改默认导航应用后不再是「每次询问」', (WidgetTester tester) async {
+    await pumpPage(tester);
+    await choose(tester, '默认导航应用', '高德地图');
+
+    expect(SettingsController.instance.value.defaultNavApp?.label, '高德地图');
+    expect(find.text('每次询问'), findsNothing);
+  });
+
+  testWidgets('开关项可以切换并落库', (WidgetTester tester) async {
+    await pumpPage(tester);
+    expect(SettingsController.instance.value.showTraffic, isFalse);
+
+    await tester.tap(
+      find.descendant(
+        of: find
+            .ancestor(of: find.text('实时路况'), matching: find.byType(Row))
+            .first,
+        matching: find.byType(Switch),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(SettingsController.instance.value.showTraffic, isTrue);
+    final AppSettings reloaded =
+        await SettingsRepository(db: AppDatabase.instance).loadSettings();
+    expect(reloaded.showTraffic, isTrue);
+  });
+
+  testWidgets('恢复默认设置会把改过的项清回去', (WidgetTester tester) async {
+    await SettingsController.instance.update(
+      const AppSettings(
+        travelMode: TravelMode.transit,
+        markerSort: MarkerSort.nameAsc,
+      ),
+    );
+    await pumpPage(tester);
+    expect(find.text('公交'), findsOneWidget);
+
+    await tester.tap(find.text('恢复默认设置'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('恢复'));
+    await tester.pumpAndSettle();
+
+    expect(SettingsController.instance.value.toMap(),
+        const AppSettings().toMap());
+    final AppSettings reloaded =
+        await SettingsRepository(db: AppDatabase.instance).loadSettings();
+    expect(reloaded.toMap(), const AppSettings().toMap());
+  });
+
+  testWidgets('没有孤儿文件时清理给出提示', (WidgetTester tester) async {
+    await pumpPage(tester);
+
+    await tester.tap(find.text('清理未引用文件'));
+    await tester.pump();
+
+    // 清理要读真实文件系统和数据库，fake async 不会推进这些 Future，
+    // 得放到 runAsync 里让真实事件循环跑完，否则 loading 一直转。
+    // 留出几轮，避免机器慢的时候刚好差一点。
+    for (int i = 0; i < 10; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+      if (find.text('没有需要清理的文件').evaluate().isNotEmpty) break;
+    }
+
+    expect(find.text('没有需要清理的文件'), findsOneWidget);
+  });
+}
