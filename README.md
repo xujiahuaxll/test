@@ -124,7 +124,22 @@ cp android/amap.properties.example android/amap.properties   # 填入自己的 K
 **debug 签名**，而 debug keystore 是构建机现场生成的——每次换一台 CI runner
 就是一个新的 SHA1，用户按上一版 APK 注册的 Key 立刻失效。
 
+**为什么签名和 Key 有关**：包名只是个字符串，谁都能填成
+`com.example.location_marker` 来盗用你的 Key；而签名需要私钥，伪造不了。
+所以高德用「包名 + 签名 SHA1」确认请求确实来自你本人编译的包，对不上就
+返回错误码 1009。校验在高德服务端做。
+
 要把同一个 APK 发给不同的人各自填 Key，先准备一个固定的 keystore：
+
+```bash
+bash scripts/make-release-key.sh
+```
+
+它会生成 `release.jks`、随机口令，并直接打印出要登记的 SHA1 和四个
+GitHub Secret 的值。已存在同名文件时会拒绝覆盖——覆盖等于换私钥，
+SHA1 会变，已登记的 Key 立刻失效。
+
+手工做等价于：
 
 ```bash
 keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 \
