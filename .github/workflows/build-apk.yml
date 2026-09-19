@@ -92,6 +92,28 @@ jobs:
             --dart-define=AMAP_IOS_KEY="${AMAP_IOS_KEY:-}"
           ls -lh build/app/outputs/flutter-apk/
 
+      # 这次闪退就是 R8 把高德的类改了名，而它的原生库 JNI_OnLoad 按原始
+      # 名字 FindClass，拿到 null 后直接 abort。没有真机也能在这里验出来。
+      - name: 校验高德的类没被混淆掉
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+
+          if unzip -p "$apk" 'classes*.dex' |
+              grep -aq 'Lcom/autonavi/amap/mapcore/MsgProcessor;'; then
+            echo "OK：MsgProcessor 以原始类名保留在 dex 里"
+          else
+            echo "::error::高德的 MsgProcessor 被改名或已被剔除，打开地图会闪退"
+            exit 1
+          fi
+
+          if unzip -l "$apk" | grep -qE 'lib/arm64-v8a/libAMapSDK_MAP'; then
+            echo "OK：arm64 的高德原生库已打进包里"
+          else
+            echo "::error::APK 里没有高德的原生库"
+            exit 1
+          fi
+
       # 把签名证书的 SHA1 打出来：到高德开放平台建 Key 时要填这个值。
       # 直接读打出来的 APK，而不是读 keystore 文件——这才是使用者实际拿到的签名。
       - name: 打印签名 SHA1

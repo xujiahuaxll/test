@@ -143,13 +143,38 @@ CI 构建：在仓库 Settings → Secrets and variables → Actions 添加四�
 不管走哪条路，构建日志的「打印签名 SHA1」一步都会输出这次用的证书指纹，
 把它填到高德开放平台建 Key 时的「SHA1」栏里。
 
-### 4. 坐标系：库里存 WGS-84，显示时转 GCJ-02
+### 4. 不能开 R8（`shrink=false`）
+
+`android/gradle.properties` 里有一行 `shrink=false`，**不要删**。
+
+Flutter 3.47 的 Gradle 插件默认给 release 打开 R8。高德 SDK
+（`com.amap.api:3dmap-location-search`）是以 **JAR** 而不是 AAR 发布的，
+JAR 不携带 consumer ProGuard 规则，R8 于是把它的类改名重打包；而
+`libAMapOpenMap.so`（即 `libAMapSDK_MAP_v10_1_200.so`，SONAME 是前者）的
+`JNI_OnLoad` 按原始类名 `com/autonavi/amap/mapcore/MsgProcessor` 去
+`FindClass`，拿到 null 后接着调 `GetStaticMethodID`，触发 JNI abort，
+一打开地图就闪退：
+
+```
+JNI DETECTED ERROR IN APPLICATION: java_class == null
+  in call to GetStaticMethodID
+```
+
+包体积 113MB 几乎全是高德的原生库，R8 根本不碰，混淆省下的那点 Java 代码
+不值得冒这个险。想重新打开就把 `shrink` 改回 `true`，
+`android/app/proguard-rules.pro` 里备好了需要的 keep 规则（未经实测）。
+
+CI 有一步「校验高德的类没被混淆掉」，直接在产物的 dex 里找
+`Lcom/autonavi/amap/mapcore/MsgProcessor;`，找不到就让构建失败——
+不用真机也能拦住这个回归。
+
+### 5. 坐标系：库里存 WGS-84，显示时转 GCJ-02
 
 系统定位（`geolocator`）给的是 WGS-84，高德用的是 GCJ-02（火星坐标）。直接把 WGS-84 的点画到高德地图上会**偏出几百米**。
 
 处理方式：数据库里统一存 WGS-84（标准坐标，复制出去能给任何地图用），只在与地图交互时转换——显示时 WGS-84 → GCJ-02，地图选点时 GCJ-02 → WGS-84（迭代反解到厘米级）。转换在 `lib/utils/coordinate.dart`，`test/coordinate_test.dart` 验证了偏移量级、往返精度、境外不偏移和偏移方向。
 
-### 5. 唤起第三方导航的坐标系
+### 6. 唤起第三方导航的坐标系
 
 各家地图收的坐标系不一样，传错会把人导到几百米外：
 
