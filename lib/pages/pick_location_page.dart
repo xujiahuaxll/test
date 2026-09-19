@@ -48,10 +48,11 @@ class PickLocationPage extends StatefulWidget {
   }
 
   @override
-  State<PickLocationPage> createState() => _PickLocationPageState();
+  State<PickLocationPage> createState() => PickLocationPageState();
 }
 
-class _PickLocationPageState extends State<PickLocationPage> {
+/// 公开是为了让相机回调的判定逻辑能被单测直接覆盖。
+class PickLocationPageState extends State<PickLocationPage> {
   final TextEditingController _searchController = TextEditingController();
 
   /// 当前选中点，GCJ-02（与地图同一套坐标）。
@@ -75,6 +76,27 @@ class _PickLocationPageState extends State<PickLocationPage> {
   /// 每次相机停下都自增，用来丢弃过期请求的返回。
   int _requestSeq = 0;
 
+  /// 我们自己调 moveCamera 时记下目标点。
+  ///
+  /// 程序化移动和用户拖动触发的是同一个 onCameraMoveEnd，不加区分的话，
+  /// 「搜索选中 -> 挪图钉」会立刻被当成一次拖动，把刚选好的名字清掉。
+  LatLngPair? _programmaticTarget;
+
+  /// 判断这次相机停下是不是我们自己挪过去的。
+  ///
+  /// 用距离比对而不是布尔开关：万一某次移动没回调，开关会一直挂着，
+  /// 之后真正的拖动就全被忽略了；用距离的话下一次拖动自然对不上，能自愈。
+  static bool isOwnMove(LatLngPair at, LatLngPair? target) {
+    if (target == null) return false;
+    return CoordinateConverter.distanceInMeters(
+          at.latitude,
+          at.longitude,
+          target.latitude,
+          target.longitude,
+        ) <
+        20;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -96,10 +118,17 @@ class _PickLocationPageState extends State<PickLocationPage> {
   bool get _amapReady => AmapRuntime.instance.mapReady;
 
   void _onCameraMoveEnd(CameraPosition position) {
-    _gcj = LatLngPair(
+    final LatLngPair at = LatLngPair(
       position.target.latitude,
       position.target.longitude,
     );
+    final LatLngPair? target = _programmaticTarget;
+    _programmaticTarget = null;
+    _gcj = at;
+
+    // 自己挪的：用户刚选中的地点名要留着，不能当成一次新的拖动。
+    if (isOwnMove(at, target)) return;
+
     setState(() {
       _address = null;
       _placeName = null;
@@ -241,25 +270,48 @@ class _PickLocationPageState extends State<PickLocationPage> {
   }
 
   /// 选中一个地点：图钉挪过去，名称与地址直接采用它的。
-  void _selectPlace(AmapPlace place) {
+  Future<void> _selectPlace(AmapPlace place) async {
     FocusScope.of(context).unfocus();
     _searchController.clear();
     setState(() {
       _tips = const <AmapPlace>[];
       _placeName = place.title;
-      _address = place.snippet.isEmpty ? _address : place.snippet;
+      // 候选没带地址时先清空，下面再补一条，别留着上一个点的地址不放
+      _address = place.snippet.isEmpty ? null : place.snippet;
       _resolving = false;
     });
 
     if (!place.hasPoint) return;
     _gcj = LatLngPair(place.latitude!, place.longitude!);
+    _programmaticTarget = _gcj;
     _controller?.moveCamera(
       CameraUpdate.newLatLng(LatLng(_gcj.latitude, _gcj.longitude)),
       animated: true,
     );
+
     // 挪过去之后刷新附近列表，但保留刚选中的名称
     final int seq = ++_requestSeq;
-    _loadNearby(seq);
+    await _loadNearby(seq);
+    if (place.snippet.isEmpty) await _fillAddressOnly(seq);
+  }
+
+  /// 只补那句详细地址，不动已经选定的地点名。
+  Future<void> _fillAddressOnly(int seq) async {
+    if (!_amapReady) return;
+    try {
+      final AmapPlaces places = await AmapLocationService.instance.nearbyPlaces(
+        apiKey: AmapRuntime.instance.effectiveKey,
+        latitude: _gcj.latitude,
+        longitude: _gcj.longitude,
+        gcj: true,
+      );
+      if (!mounted || seq != _requestSeq) return;
+      if (places.formatAddress.isNotEmpty) {
+        setState(() => _address = places.formatAddress);
+      }
+    } on LocationFailure {
+      // 补不上就只显示地点名，不影响确认
+    }
   }
 
   void _confirm() {
