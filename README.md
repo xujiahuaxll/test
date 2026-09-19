@@ -132,7 +132,7 @@ flutter test           # 单元测试 + widget 测试
 
 首次运行会向系统申请定位、麦克风、相机/相册权限。权限声明已经配好：
 
-- Android：`android/app/src/main/AndroidManifest.xml`（定位、录音、相机、相册，含 Android 13+ 的 `READ_MEDIA_IMAGES`，高德需要的 `INTERNET`/`ACCESS_NETWORK_STATE`/`ACCESS_WIFI_STATE`/`CHANGE_WIFI_STATE`，以及 speech/相机的 `<queries>`），`minSdk = 23`
+- Android：`android/app/src/main/AndroidManifest.xml`（定位、录音、相机、相册，含 Android 13+ 的 `READ_MEDIA_IMAGES`，高德需要的 `INTERNET`/`ACCESS_NETWORK_STATE`/`ACCESS_WIFI_STATE`/`CHANGE_WIFI_STATE`，以及 speech/相机的 `<queries>`），`minSdk = 24`（Flutter 3.47 模板默认值，即 Android 7.0 及以上）
 - iOS：`ios/Runner/Info.plist`（定位、麦克风、语音识别、相机、相册的用途说明）
 
 ## 代码结构
