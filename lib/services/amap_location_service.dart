@@ -269,16 +269,22 @@ class AmapPlaces {
   final String building;
   final String aoiName;
 
-  /// 最贴切的一个地点名：楼宇 > 园区 > 最近的 POI > 格式化地址。
+  /// 最贴切的一个地点名：楼宇 > 最近的 POI > 园区。
+  ///
+  /// 取不到就返回 null，**不回落到整句地址**——回落的话标题和副标题
+  /// 会变成同一句话，等于白占一行。上层拿到 null 时自己用地址当标题。
+  ///
+  /// POI 排在园区前面是因为它更具体：站在小区里，POI 可能是
+  /// 「双河北里小区-乙27号楼」，而园区名只有「双河北里小区」。
   String? get bestName {
-    for (final String candidate in <String>[building, aoiName]) {
-      if (candidate.trim().isNotEmpty) return candidate.trim();
-    }
+    final String buildingName = building.trim();
+    if (buildingName.isNotEmpty) return buildingName;
+
     if (places.isNotEmpty && places.first.title.isNotEmpty) {
       return places.first.title;
     }
-    final String address = formatAddress.trim();
-    return address.isEmpty ? null : address;
+    final String aoi = aoiName.trim();
+    return aoi.isEmpty ? null : aoi;
   }
 
   static AmapPlaces fromMap(Map<Object?, Object?> raw) {

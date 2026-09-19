@@ -317,13 +317,15 @@ class AmapLocationHandler(private val context: Context) {
                 }
             }
         )
-        search.getFromLocationAsyn(
-            RegeocodeQuery(
-                LatLonPoint(latitude, longitude),
-                radius,
-                GeocodeSearch.GPS,
-            )
+        val query = RegeocodeQuery(
+            LatLonPoint(latitude, longitude),
+            radius,
+            GeocodeSearch.GPS,
         )
+        // 默认是 base，只回一条街道地址，不带 POI 和 AOI——
+        // 「附近地点」一直是空的就是因为这个，必须显式要 all。
+        query.setExtensions(GeocodeSearch.EXTENSIONS_ALL)
+        search.getFromLocationAsyn(query)
     }
 
     private fun toMap(address: RegeocodeAddress): Map<String, Any?> {

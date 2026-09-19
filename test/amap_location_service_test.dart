@@ -323,23 +323,31 @@ void main() {
       expect(places.bestName, '中铁吉盛物流大厦');
     });
 
-    test('没有楼宇和园区时用最近的 POI', () {
+    test('没有楼宇时用最近的 POI，它比园区名更具体', () {
       final AmapPlaces places = AmapPlaces.fromMap(payload(
+        aoiName: '双河北里小区',
         pois: <Map<String, Object?>>[
-          <String, Object?>{'title': '永珍超市', 'distance': 30},
+          <String, Object?>{'title': '双河北里小区-乙27号楼', 'distance': 12},
           <String, Object?>{'title': '金羽毛羽球馆', 'distance': 180},
         ],
       ));
-      expect(places.bestName, '永珍超市');
-      expect(places.places.length, 2);
+      expect(places.bestName, '双河北里小区-乙27号楼');
     });
 
-    test('一个 POI 都没有时退回整句地址', () {
-      expect(AmapPlaces.fromMap(payload()).bestName, '北京市大兴区天河北路5号');
+    test('只有园区名时用园区名', () {
       expect(
-        AmapPlaces.fromMap(payload(formatAddress: '')).bestName,
-        isNull,
+        AmapPlaces.fromMap(payload(aoiName: '双河北里小区')).bestName,
+        '双河北里小区',
       );
+    });
+
+    test('都没有时返回 null，不能回落到整句地址', () {
+      // 回落的话标题和副标题会是同一句话，白占一行
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        formatAddress: '北京市大兴区观音寺街道双河北里三巷',
+      ));
+      expect(places.bestName, isNull);
+      expect(places.formatAddress, '北京市大兴区观音寺街道双河北里三巷');
     });
 
     test('标题为空的 POI 会被剔除，不会显示成空条目', () {

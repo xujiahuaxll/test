@@ -204,12 +204,12 @@ class LocationService {
         latitude: located.latitude,
         longitude: located.longitude,
       );
+      final String? full =
+          places.formatAddress.isEmpty ? null : places.formatAddress;
       final String? name = places.bestName;
-      if (name != null) {
-        return located.copyWith(
-          placeName: name,
-          address: places.formatAddress.isEmpty ? null : places.formatAddress,
-        );
+      // 地点名取不到也没关系，有整句地址就够界面显示了。
+      if (name != null || full != null) {
+        return located.copyWith(placeName: name, address: full);
       }
     } on LocationFailure catch (failure) {
       // 逆地理失败不影响已经拿到的坐标，记下原因继续往下兜底

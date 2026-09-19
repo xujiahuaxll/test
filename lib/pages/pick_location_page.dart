@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:x_amap_base/x_amap_base.dart';
 
+import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
 import '../services/location_service.dart';
 import '../services/settings_controller.dart';
@@ -47,6 +48,7 @@ class _PickLocationPageState extends State<PickLocationPage> {
   late LatLngPair _wgs =
       LatLngPair(widget.initialLatitude, widget.initialLongitude);
   String? _address;
+  String? _placeName;
   bool _resolving = false;
   Timer? _debounce;
 
@@ -70,29 +72,59 @@ class _PickLocationPageState extends State<PickLocationPage> {
     );
     setState(() {
       _address = null;
+      _placeName = null;
       _resolving = true;
     });
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 500), _resolveAddress);
   }
 
+  /// 解析拖到的这个点。
+  ///
+  /// 和定位那条链路走同一套：优先高德（中文、带地点名），
+  /// 不可用时才回落系统逆地理编码。之前这里是直接调系统的，
+  /// 所以新建页已经是中文地点名了，这个页面还停在英文单行。
   Future<void> _resolveAddress() async {
     setState(() => _resolving = true);
+
+    String? placeName;
     String? address;
-    try {
-      final List<Placemark> marks = await Geocoding().placemarkFromCoordinates(
-        _wgs.latitude,
-        _wgs.longitude,
-        locale: const Locale('zh', 'CN'),
-      );
-      if (marks.isNotEmpty) {
-        address = LocationService.formatPlacemark(marks.first);
+
+    if (AmapRuntime.instance.mapReady) {
+      try {
+        final AmapPlaces places =
+            await AmapLocationService.instance.nearbyPlaces(
+          apiKey: AmapRuntime.instance.effectiveKey,
+          latitude: _wgs.latitude,
+          longitude: _wgs.longitude,
+        );
+        placeName = places.bestName;
+        address =
+            places.formatAddress.isEmpty ? null : places.formatAddress;
+      } on LocationFailure {
+        // 高德不可用就往下走系统解析
       }
-    } catch (_) {
-      address = null;
     }
+
+    if (placeName == null && address == null) {
+      try {
+        final List<Placemark> marks =
+            await Geocoding().placemarkFromCoordinates(
+          _wgs.latitude,
+          _wgs.longitude,
+          locale: const Locale('zh', 'CN'),
+        );
+        if (marks.isNotEmpty) {
+          address = LocationService.formatPlacemark(marks.first);
+        }
+      } catch (_) {
+        address = null;
+      }
+    }
+
     if (!mounted) return;
     setState(() {
+      _placeName = placeName;
       _address = address;
       _resolving = false;
     });
@@ -105,6 +137,7 @@ class _PickLocationPageState extends State<PickLocationPage> {
         longitude: _wgs.longitude,
         accuracy: 0,
         address: _address,
+        placeName: _placeName,
       ),
     );
   }
@@ -149,6 +182,7 @@ class _PickLocationPageState extends State<PickLocationPage> {
             bottom: 24,
             child: _AddressPanel(
               address: _address,
+              placeName: _placeName,
               resolving: _resolving,
               coordinate: '${_wgs.latitude.toStringAsFixed(6)}, '
                   '${_wgs.longitude.toStringAsFixed(6)}',
@@ -188,15 +222,30 @@ class _CenterPin extends StatelessWidget {
 class _AddressPanel extends StatelessWidget {
   const _AddressPanel({
     required this.address,
+    required this.placeName,
     required this.resolving,
     required this.coordinate,
     required this.onConfirm,
   });
 
   final String? address;
+  final String? placeName;
   final bool resolving;
   final String coordinate;
   final VoidCallback onConfirm;
+
+  /// 标题用地点名，没有就用地址。
+  String? get title {
+    if (placeName?.isNotEmpty == true) return placeName;
+    if (address?.isNotEmpty == true) return address;
+    return null;
+  }
+
+  /// 标题已经是地点名时才补详细地址，避免两行一模一样。
+  String? get subtitle =>
+      placeName?.isNotEmpty == true && address?.isNotEmpty == true
+          ? address
+          : null;
 
   @override
   Widget build(BuildContext context) {
@@ -224,11 +273,26 @@ class _AddressPanel extends StatelessWidget {
                               color: AppColors.textSecondary,
                             ),
                       )
-                    : Text(
-                        address?.isNotEmpty == true
-                            ? address!
-                            : '未获取到地址（将只记录坐标）',
-                        style: Theme.of(context).textTheme.titleMedium,
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Text(
+                            title ?? '未获取到地址（将只记录坐标）',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          if (subtitle != null) ...<Widget>[
+                            const SizedBox(height: 4),
+                            Text(
+                              subtitle!,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: AppColors.textSecondary),
+                            ),
+                          ],
+                        ],
                       ),
               ),
             ],
