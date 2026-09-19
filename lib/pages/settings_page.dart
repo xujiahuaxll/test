@@ -516,22 +516,25 @@ class _AmapKeyDialogState extends State<_AmapKeyDialog> {
   late final TextEditingController _controller =
       TextEditingController(text: widget.initial);
 
-  String? _error;
-
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
 
-  void _submit() {
+  /// 只提示，不拦截。
+  ///
+  /// 「32 位十六进制」只是我按现在见到的 Key 归纳出来的，不是高德的承诺。
+  /// 拿它当硬性校验，等于哪天格式一变就把用户锁在外面、什么都配不了。
+  /// 真正能判定 Key 行不行的是高德服务器，填错了它会回明确的错误码。
+  bool get _looksUnusual {
     final String value = _controller.text.trim();
-    // 允许清空：表示不再用自己的 Key。
-    if (value.isNotEmpty && !AmapConfig.looksLikeKey(value)) {
-      setState(() => _error = 'Key 应该是 32 位的字母数字，请核对后重填');
-      return;
-    }
-    Navigator.of(context).pop(_KeyEditResult(value));
+    return value.isNotEmpty && !AmapConfig.looksLikeKey(value);
+  }
+
+  void _submit() {
+    // 清空表示不再用自己的 Key，同样放行。
+    Navigator.of(context).pop(_KeyEditResult(_controller.text.trim()));
   }
 
   @override
@@ -562,16 +565,25 @@ class _AmapKeyDialogState extends State<_AmapKeyDialog> {
             enableSuggestions: false,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => _submit(),
-            onChanged: (_) {
-              if (_error != null) setState(() => _error = null);
-            },
-            decoration: InputDecoration(
-              hintText: '粘贴 32 位的 Key',
-              errorText: _error,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              hintText: '粘贴高德后台的 Key',
               isDense: true,
             ),
             style: const TextStyle(fontSize: 14, letterSpacing: 0.4),
           ),
+          if (_looksUnusual) ...<Widget>[
+            const SizedBox(height: 8),
+            const Text(
+              '看着不像常见的 32 位 Key，可能是漏字或多了空格。'
+              '不确定也可以直接保存，能不能用由高德判定。',
+              style: TextStyle(
+                fontSize: 11.5,
+                height: 1.45,
+                color: AppColors.accent,
+              ),
+            ),
+          ],
           if (widget.initial.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
             const Text(

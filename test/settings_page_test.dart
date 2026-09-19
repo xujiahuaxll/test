@@ -233,24 +233,35 @@ void main() {
       );
     });
 
-    testWidgets('格式不对的 Key 会被拦下，不写库', (WidgetTester tester) async {
+    testWidgets('格式少见的 Key 只提示不拦截，照样能存', (WidgetTester tester) async {
       await pumpPage(tester);
 
       await tester.tap(find.text('高德地图 Key'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), '这显然不是一个 key');
-      await tester.tap(find.text('保存'));
+      await tester.enterText(find.byType(TextField), 'my-unusual-key-2026');
       await tester.pumpAndSettle();
 
-      // 弹窗还开着，并给出错误提示
-      expect(find.text('Key 应该是 32 位的字母数字，请核对后重填'), findsOneWidget);
-      expect(AmapRuntime.instance.userKey.value, isEmpty);
+      // 给提示，但不挡着保存——能不能用由高德判定，不该由我的正则决定
+      expect(
+        find.textContaining('看着不像常见的 32 位 Key'),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      // 没同意过隐私声明，保存后会补问一次
+      if (find.text('隐私声明').evaluate().isNotEmpty) {
+        await tester.tap(find.text('同意'));
+        await tester.pumpAndSettle();
+      }
+
+      expect(AmapRuntime.instance.userKey.value, 'my-unusual-key-2026');
 
       final SettingsRepository repo =
           SettingsRepository(db: AppDatabase.instance);
       expect(
         await repo.getString(SettingsRepository.keyAmapAndroidKey),
-        isNull,
+        'my-unusual-key-2026',
       );
     });
 
