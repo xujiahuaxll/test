@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -6,10 +9,10 @@ plugins {
 
 // 高德 Key 从 android/amap.properties 读取（该文件不进仓库）。
 // 没有这个文件时占位为空串，编译照常通过，地图会退回本地示意图。
-val amapProperties = java.util.Properties()
+val amapProperties = Properties()
 val amapPropertiesFile = rootProject.file("amap.properties")
 if (amapPropertiesFile.exists()) {
-    amapPropertiesFile.inputStream().use { amapProperties.load(it) }
+    FileInputStream(amapPropertiesFile).use { stream -> amapProperties.load(stream) }
 }
 val amapAndroidKey: String = amapProperties.getProperty("AMAP_ANDROID_KEY") ?: ""
 
