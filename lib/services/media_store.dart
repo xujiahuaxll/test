@@ -81,9 +81,15 @@ class MediaStore {
   }
 
   /// 为一次新的录音分配文件路径，返回 (相对路径, 绝对路径)。
-  Future<({String relative, String absolute})> newAudioFile() async {
+  ///
+  /// [extension] 要和实际录出来的格式对上（.wav / .m4a）——播放器和离线
+  /// 识别模型都会先看后缀，对不上就会被误导。
+  Future<({String relative, String absolute})> newAudioFile({
+    String extension = '.wav',
+  }) async {
     final Directory dir = await _subDir('audio');
-    final String relative = p.join('audio', '${_uuid.v4()}.m4a');
+    final String ext = extension.startsWith('.') ? extension : '.$extension';
+    final String relative = p.join('audio', '${_uuid.v4()}$ext');
     return (relative: relative, absolute: p.join(dir.parent.path, relative));
   }
 

@@ -55,6 +55,16 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["AMAP_ANDROID_KEY"] = amapAndroidKey
+
+        // 只带手机上真会用到的两种 CPU。
+        //
+        // sherpa-onnx（离线语音识别）给四种 ABI 各带一套原生库，加起来
+        // 105 MB，其中 x86/x86_64 那 61 MB 只有模拟器用得上——这是给真人
+        // 装的 App，白白让安装包大一倍没有意义。
+        // armeabi-v7a 留着：老一点的手机还在用，去掉它们就装不了。
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     signingConfigs {

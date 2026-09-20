@@ -84,10 +84,6 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
-        <!-- speech_to_text 需要查询系统自带的语音识别服务 -->
-        <intent>
-            <action android:name="android.speech.RecognitionService"/>
-        </intent>
         <!-- image_picker 需要查询相机应用 -->
         <intent>
             <action android:name="android.media.action.IMAGE_CAPTURE"/>

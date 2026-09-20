@@ -73,6 +73,12 @@ jobs:
           PROPS
           echo "已启用固定的 release 签名"
 
+      # 78 MB 的中文语音模型，不在仓库里，构建前拉一次。
+      # 拉不到就让构建挂掉：静悄悄打出一个「录音能录但转不出字」的包，
+      # 装到手机上才发现，比在这儿红一次糟糕得多。
+      - name: 下载离线语音模型
+        run: bash scripts/fetch-asr-model.sh
+
       - name: 拉依赖
         run: flutter pub get
 
@@ -113,6 +119,41 @@ jobs:
             echo "::error::APK 里没有高德的原生库"
             exit 1
           fi
+
+      # 语音模型和它的原生库有没有真的进包。少了任何一样，录音都还能录，
+      # 但转不出文字——这种缺失不会让构建失败，只会让用户白等，所以在这查。
+      - name: 校验语音模型进包了
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+
+          if unzip -l "$apk" | grep -q 'assets/flutter_assets/assets/asr/model.int8.onnx'; then
+            echo "OK：语音模型已打进包里"
+          else
+            echo "::error::APK 里没有语音模型，录音将无法转文字"
+            exit 1
+          fi
+
+          for abi in arm64-v8a armeabi-v7a; do
+            if unzip -l "$apk" | grep -q "lib/$abi/libsherpa-onnx-c-api.so"; then
+              echo "OK：$abi 的 sherpa-onnx 原生库已打进包里"
+            else
+              echo "::error::APK 里没有 $abi 的 sherpa-onnx 原生库"
+              exit 1
+            fi
+          done
+
+          # abiFilters 没生效的话 x86/x86_64 那 61 MB 会白白进包。
+          # 只有模拟器用得上，装到手机里纯属浪费。
+          if unzip -l "$apk" | grep -qE 'lib/(x86|x86_64)/'; then
+            echo "::error::APK 里还带着 x86 的原生库，abiFilters 没生效"
+            unzip -l "$apk" | grep -E 'lib/(x86|x86_64)/' | head
+            exit 1
+          fi
+          echo "OK：x86 的原生库已被排除"
+
+          echo "各 ABI 占用："
+          unzip -l "$apk" | awk '/lib\//{split($4,a,"/"); s[a[2]]+=$1} END{for(k in s) printf "  %-14s %6.1f MB\n", k, s[k]/1048576}'
 
       # 把签名证书的 SHA1 打出来：到高德开放平台建 Key 时要填这个值。
       # 直接读打出来的 APK，而不是读 keystore 文件——这才是使用者实际拿到的签名。

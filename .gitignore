@@ -31,3 +31,12 @@ ios/Flutter/ephemeral/
 ios/Pods/
 ios/Podfile.lock
 ios/.symlinks/
+
+# 离线语音模型。由 scripts/fetch-asr-model.sh 下载，78 MB，不进仓库。
+# 目录本身要留着：pubspec 里声明了 assets/asr/，目录不存在时 flutter build
+# 会直接报 "unable to find directory entry in pubspec.yaml" 失败。
+assets/asr/*
+!assets/asr/.gitkeep
+
+# 给离线识别测试用的音频，同样由 scripts/fetch-asr-model.sh 下载。
+.asr-test/

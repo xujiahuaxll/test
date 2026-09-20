@@ -1,0 +1,6 @@
+离线语音识别模型放在这个目录里，由 scripts/fetch-asr-model.sh 下载：
+
+    bash scripts/fetch-asr-model.sh
+
+模型文件本身不进 git（78 MB）。这个占位文件是为了让目录留在仓库里——
+pubspec.yaml 声明了 assets/asr/，目录不存在时 flutter build 会直接失败。

@@ -88,7 +88,6 @@ void main() {
         locateAccuracy: LocateAccuracy.balanced,
         locateTimeoutSeconds: 30,
         reverseGeocode: false,
-        speechLocale: SpeechLocale.english,
         audioQuality: AudioQuality.saver,
         photoQuality: PhotoQuality.saver,
         markerSort: MarkerSort.oldestFirst,

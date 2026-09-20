@@ -123,7 +123,7 @@ class SyncRunner {
     final MediaRef? audioRef = wanted.audio;
     final String? audioPath = audioRef == null
         ? null
-        : await _localize(audioRef, folder: 'audio', fallbackExt: '.m4a');
+        : await _localize(audioRef, folder: 'audio', fallbackExt: '.wav');
 
     return LocationMark(
       id: wanted.mark.id,

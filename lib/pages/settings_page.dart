@@ -12,6 +12,7 @@ import '../data/settings_repository.dart';
 import '../models/app_settings.dart';
 import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
+import '../services/asr_service.dart';
 import '../services/media_store.dart';
 import '../services/navigation_launcher.dart';
 import '../services/settings_controller.dart';
@@ -42,6 +43,9 @@ class _SettingsPageState extends State<SettingsPage> {
   AppVersion? _version;
   bool _checkingUpgrade = false;
 
+  /// 本机有没有离线语音模型。null 表示还在查。
+  bool? _asrReady;
+
   /// 云端同步的三项配置。三项齐全才算配好，缺一不可。
   String _cloudApi = '';
   String _cloudAccount = '';
@@ -60,6 +64,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadSignature();
     _loadUpgradeConfig();
     _loadCloudConfig();
+    _loadAsrState();
   }
 
   @override
@@ -70,6 +75,14 @@ class _SettingsPageState extends State<SettingsPage> {
 
   void _onSettingsChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// 本机有没有可用的离线语音模型。模型是随 APK 发的，装上就有，
+  /// 但旧版本升上来或者构建时没带模型的包就没有，得如实告诉用户。
+  Future<void> _loadAsrState() async {
+    final bool ready = await AsrService.instance.isAvailable();
+    if (!mounted) return;
+    setState(() => _asrReady = ready);
   }
 
   Future<void> _loadSignature() async {
@@ -245,11 +258,18 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: Icons.mic_none_outlined,
             title: '备注与录音',
             children: <Widget>[
-              _OptionRow(
-                title: '语音识别语言',
-                subtitle: '录音转文字使用的识别语言',
-                value: settings.speechLocale.label,
-                onTap: _pickSpeechLocale,
+              _InfoRow(
+                title: '离线语音转文字',
+                hint: _asrReady == null
+                    ? '正在检查本机的语音模型…'
+                    : _asrReady!
+                        ? '模型已就绪，录完自动转文字。识别全程在本机进行，不联网'
+                        : '这个版本没有带语音模型，只能录音，文字需要手动补',
+                value: _asrReady == null
+                    ? '检查中'
+                    : _asrReady!
+                        ? '可用'
+                        : '不可用',
               ),
               _OptionRow(
                 title: '录音音质',
@@ -497,20 +517,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (picked != null) {
       await _apply(_settings.copyWith(locateTimeoutSeconds: picked.value));
-    }
-  }
-
-  Future<void> _pickSpeechLocale() async {
-    final _Choice<SpeechLocale>? picked = await _pick<SpeechLocale>(
-      '语音识别语言',
-      <_Choice<SpeechLocale>>[
-        for (final SpeechLocale item in SpeechLocale.values)
-          _Choice<SpeechLocale>(item, item.label, hint: item.id),
-      ],
-      _settings.speechLocale,
-    );
-    if (picked != null) {
-      await _apply(_settings.copyWith(speechLocale: picked.value));
     }
   }
 

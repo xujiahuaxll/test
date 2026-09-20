@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../data/marker_repository.dart';
 import '../models/app_settings.dart';
 import '../models/location_mark.dart';
+import '../services/asr_service.dart';
 import '../services/location_service.dart';
 import '../services/media_store.dart';
 import '../services/settings_controller.dart';
@@ -56,6 +57,12 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
   /// 语音识别出的原文。备注里的文字用户可以随意改，这里保留识别原文。
   String? _transcript;
 
+  /// 正在重新识别。
+  bool _transcribing = false;
+
+  /// 上一次识别为什么没出文字。空串表示没有可说的。
+  String _transcribeError = '';
+
   /// 编辑时被移除的媒体文件，保存成功后再真正删除。
   final List<String> _pendingDeletions = <String>[];
   bool _saving = false;
@@ -94,6 +101,10 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
   void dispose() {
     _nameController.dispose();
     _noteController.dispose();
+    // 识别用的 isolate 里驻着几百兆的模型。留着能让「重新识别」快一些，
+    // 但那只在这个页面里有意义，离开就该放掉——一个记地点的 App 常驻
+    // 几百兆内存，迟早被系统挑出来杀掉。
+    AsrService.instance.release();
     super.dispose();
   }
 
@@ -160,22 +171,64 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
     });
   }
 
+  /// 还能再加几张。上限 9 张。
+  int get _photoSlots => 9 - _photoPaths.length;
+
   Future<void> _pickPhoto(ImageSource source) async {
+    final PhotoQuality quality = SettingsController.instance.value.photoQuality;
+    final int slots = _photoSlots;
+    if (slots <= 0) {
+      _toast('最多添加 9 张照片');
+      return;
+    }
+
+    List<XFile> files;
     try {
-      final PhotoQuality quality =
-          SettingsController.instance.value.photoQuality;
-      final XFile? file = await _picker.pickImage(
-        source: source,
-        imageQuality: quality.quality,
-        maxWidth: quality.maxWidth,
-      );
-      if (file == null) return;
-      final String relative = await MediaStore.instance.importPhoto(file.path);
-      if (!mounted) return;
-      setState(() => _photoPaths.add(relative));
+      if (source == ImageSource.camera) {
+        // 相机本来就一次一张，没有批量可言。
+        final XFile? shot = await _picker.pickImage(
+          source: ImageSource.camera,
+          imageQuality: quality.quality,
+          maxWidth: quality.maxWidth,
+        );
+        files = shot == null ? <XFile>[] : <XFile>[shot];
+      } else {
+        files = await _picker.pickMultiImage(
+          imageQuality: quality.quality,
+          maxWidth: quality.maxWidth,
+          // 交给系统相册去限制，用户就不会选了一堆才被告知超了。
+          limit: slots,
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       _toast('打开${source == ImageSource.camera ? '相机' : '相册'}失败：$e');
+      return;
+    }
+    if (files.isEmpty) return;
+
+    // limit 只是给系统的建议，部分机型不认，这里再兜一道。
+    final List<XFile> accepted = files.take(slots).toList();
+
+    final List<String> imported = <String>[];
+    int failed = 0;
+    for (final XFile file in accepted) {
+      try {
+        imported.add(await MediaStore.instance.importPhoto(file.path));
+      } catch (_) {
+        // 单张导入失败不该让整批都白选，记个数最后一起说。
+        failed++;
+      }
+    }
+
+    if (!mounted) return;
+    if (imported.isNotEmpty) setState(() => _photoPaths.addAll(imported));
+
+    final int dropped = files.length - accepted.length;
+    if (dropped > 0) {
+      _toast('最多 9 张，已添加 ${imported.length} 张，其余 $dropped 张没有加入');
+    } else if (failed > 0) {
+      _toast('有 $failed 张照片导入失败');
     }
   }
 
@@ -207,11 +260,51 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
       _waveform = result.waveform;
       _noteMode = _NoteMode.voice;
 
+      _transcribeError = '';
       final String text = result.transcript.trim();
       if (text.isNotEmpty) {
         _transcript = text;
         final String current = _noteController.text.trim();
         _noteController.text = current.isEmpty ? text : '$current\n$text';
+      }
+    });
+  }
+
+  /// 重新把这段录音跑一遍离线识别。
+  ///
+  /// 需要这个入口的原因有两个：一是转写可能失败（模型没加载起来、
+  /// 录音太短），失败了总得有第二次机会；二是编辑旧标记时，那条录音
+  /// 可能是还没有识别能力的版本录的。
+  Future<void> _retranscribe() async {
+    final String? path = _audioPath;
+    if (path == null || _transcribing) return;
+    setState(() {
+      _transcribing = true;
+      _transcribeError = '';
+    });
+
+    String? text;
+    String error = '';
+    try {
+      text = await AsrService.instance
+          .transcribeFile(MediaStore.instance.absolute(path));
+      if (text.trim().isEmpty) error = '这段录音没识别出文字';
+    } on AsrFailure catch (e) {
+      error = e.message;
+    } catch (e) {
+      error = '识别失败：$e';
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _transcribing = false;
+      _transcribeError = error;
+      final String got = text?.trim() ?? '';
+      if (got.isNotEmpty) {
+        _transcript = got;
+        // 直接覆盖备注：用户点的是「重新识别」，要的就是新结果。
+        // 原来的文字如果是手改过的，这里会丢——所以按钮的文案写明了。
+        _noteController.text = got;
       }
     });
   }
@@ -225,6 +318,7 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
       _audioDuration = null;
       _waveform = const <double>[];
       _transcript = null;
+      _transcribeError = '';
     });
   }
 
@@ -573,13 +667,43 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                   const Icon(Icons.text_fields,
                       size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 6),
-                  Text(
-                    '转写文字（可编辑）',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textSecondary,
-                        ),
+                  Expanded(
+                    child: Text(
+                      '转写文字（可编辑）',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
+                    ),
                   ),
+                  if (_transcribing)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    )
+                  else
+                    TextButton.icon(
+                      onPressed: _retranscribe,
+                      icon: const Icon(Icons.autorenew, size: 16),
+                      label: const Text('重新识别'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        textStyle: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 10),
@@ -587,10 +711,42 @@ class _AddMarkerPageState extends State<AddMarkerPage> {
                 controller: _noteController,
                 maxLines: 4,
                 minLines: 3,
-                decoration: const InputDecoration(
-                  hintText: '识别结果会显示在这里，可以手动修改',
+                decoration: InputDecoration(
+                  hintText: _transcribing
+                      ? '正在识别…'
+                      : '识别结果会显示在这里，可以手动修改',
                 ),
               ),
+              if (_transcribeError.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Icon(Icons.info_outline,
+                        size: 14, color: AppColors.textTertiary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '$_transcribeError。录音已经存好了，文字可以直接手打。',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: AppColors.textTertiary),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  '识别在本机进行，不联网。小模型难免有错字，改一改就行；'
+                  '「重新识别」会用识别结果覆盖上面的文字。',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: AppColors.textTertiary),
+                ),
+              ],
             ],
           ],
         ],
@@ -1180,6 +1336,10 @@ class _PhotoSourceSheet extends StatelessWidget {
               leading: const Icon(Icons.photo_library_outlined,
                   color: AppColors.primary),
               title: const Text('从相册选择'),
+              subtitle: const Text(
+                '可以一次选多张',
+                style: TextStyle(fontSize: 12, color: AppColors.textTertiary),
+              ),
               onTap: () => onPick(ImageSource.gallery),
             ),
             const SizedBox(height: 6),

@@ -23,7 +23,6 @@ void main() {
       locateAccuracy: LocateAccuracy.powerSave,
       locateTimeoutSeconds: 60,
       reverseGeocode: false,
-      speechLocale: SpeechLocale.cantonese,
       audioQuality: AudioQuality.high,
       photoQuality: PhotoQuality.original,
       markerSort: MarkerSort.nameAsc,

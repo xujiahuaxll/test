@@ -31,3 +31,5 @@ gradlew.bat text eol=crlf
 *.jar     binary
 *.so      binary
 *.m4a     binary
+*.wav     binary
+*.onnx    binary

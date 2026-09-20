@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
+import '../services/asr_service.dart';
 import '../services/media_store.dart';
 import '../services/recorder_service.dart';
-import '../services/speech_service.dart';
 import '../theme/app_theme.dart';
 import 'waveform.dart';
 
@@ -23,13 +23,16 @@ class RecordResult {
   final String relativePath;
   final Duration duration;
 
-  /// 系统语音识别出的文字，识别不可用时为空串。
+  /// 离线识别出的文字。没识别出来或用户跳过时为空串。
   final String transcript;
   final List<double> waveform;
 }
 
-/// 录音面板：真实录麦克风 + 实时振幅波形 + 系统语音转文字。
-/// 语音识别与录音并行，识别不可用时自动降级为「只录音」。
+/// 录音面板：录麦克风 + 实时振幅波形，停下来之后用本地模型转文字。
+///
+/// 转文字放在录完之后，不是边录边转。原因是系统的实时识别要独占麦克风，
+/// 和录音抢，两边只能活一个；换成本地离线模型就没这个矛盾了，代价是文字
+/// 要等录完才出来。
 class RecordSheet extends StatefulWidget {
   const RecordSheet({super.key});
 
@@ -49,11 +52,10 @@ class RecordSheet extends StatefulWidget {
   State<RecordSheet> createState() => _RecordSheetState();
 }
 
-enum _Stage { preparing, recording, paused, finishing, error }
+enum _Stage { preparing, recording, paused, transcribing, error }
 
 class _RecordSheetState extends State<RecordSheet> {
   final RecorderService _recorder = RecorderService.instance;
-  final SpeechService _speech = SpeechService.instance;
 
   _Stage _stage = _Stage.preparing;
   String _errorMessage = '';
@@ -61,14 +63,17 @@ class _RecordSheetState extends State<RecordSheet> {
 
   String? _relativePath;
   String? _absolutePath;
+  RecordFormat _format = RecordFormat.wav;
 
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   StreamSubscription<Amplitude>? _amplitudeSub;
   final List<double> _levels = <double>[];
 
-  bool _speechAvailable = false;
+  /// 本机能不能做离线识别：模型没打进包里，或录出来的不是 WAV，都不能。
+  bool _canTranscribe = false;
   String _transcript = '';
+  String _transcribeNote = '';
 
   @override
   void initState() {
@@ -97,13 +102,15 @@ class _RecordSheetState extends State<RecordSheet> {
       return;
     }
 
+    // 先定格式再分配文件名，后缀得和真实格式对上。
+    _format = await _recorder.preferredFormat();
     final ({String absolute, String relative}) file =
-        await MediaStore.instance.newAudioFile();
+        await MediaStore.instance.newAudioFile(extension: _format.extension);
     _relativePath = file.relative;
     _absolutePath = file.absolute;
 
     try {
-      await _recorder.start(file.absolute);
+      await _recorder.start(file.absolute, _format);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -120,16 +127,13 @@ class _RecordSheetState extends State<RecordSheet> {
 
     _startTimer();
 
-    // 与录音并行做语音识别；设备不支持时只录音。
-    final bool speechOk = await _speech.start(
-      onText: (String text) {
-        if (!mounted) return;
-        setState(() => _transcript = text);
-      },
-    );
+    // 模型在不在是个纯本地的检查，顺手问一下，好在界面上提前说清楚
+    // 这次到底有没有文字——别让人录完了才发现没有。
+    final bool modelReady =
+        _format.transcribable && await AsrService.instance.isAvailable();
     if (!mounted) return;
     setState(() {
-      _speechAvailable = speechOk;
+      _canTranscribe = modelReady;
       _stage = _Stage.recording;
     });
   }
@@ -153,21 +157,11 @@ class _RecordSheetState extends State<RecordSheet> {
     if (_stage == _Stage.recording) {
       await _recorder.pause();
       _timer?.cancel();
-      if (_speechAvailable) await _speech.stop();
       if (!mounted) return;
       setState(() => _stage = _Stage.paused);
     } else if (_stage == _Stage.paused) {
       await _recorder.resume();
       _startTimer();
-      if (_speechAvailable) {
-        await _speech.start(
-          initial: _transcript,
-          onText: (String text) {
-            if (!mounted) return;
-            setState(() => _transcript = text);
-          },
-        );
-      }
       if (!mounted) return;
       setState(() => _stage = _Stage.recording);
     }
@@ -176,7 +170,6 @@ class _RecordSheetState extends State<RecordSheet> {
   Future<void> _cancel() async {
     _timer?.cancel();
     await _amplitudeSub?.cancel();
-    await _speech.cancel();
     final String? path = _absolutePath;
     if (path != null) await _recorder.cancel(path);
     if (!mounted) return;
@@ -184,14 +177,14 @@ class _RecordSheetState extends State<RecordSheet> {
   }
 
   Future<void> _finish() async {
-    setState(() => _stage = _Stage.finishing);
+    setState(() {
+      _stage = _Stage.transcribing;
+      _transcribeNote = _canTranscribe ? '' : '这次只保存录音，文字可以稍后补';
+    });
     _timer?.cancel();
     await _amplitudeSub?.cancel();
 
-    final String transcript =
-        _speechAvailable ? await _speech.stop() : '';
     final String? path = await _recorder.stop();
-
     if (!mounted) return;
     if (path == null || _relativePath == null) {
       setState(() {
@@ -201,11 +194,31 @@ class _RecordSheetState extends State<RecordSheet> {
       return;
     }
 
+    if (_canTranscribe) {
+      try {
+        _transcript = await AsrService.instance.transcribeFile(path);
+      } on AsrFailure catch (e) {
+        // 转写失败不能连累录音：文字留空，回到编辑页还能点「重新识别」。
+        _transcribeNote = e.message;
+      } catch (e) {
+        _transcribeNote = '转文字失败：$e';
+      }
+    }
+
+    if (!mounted) return;
+    _pop();
+  }
+
+  /// 把这次录音的结果交回给编辑页。
+  ///
+  /// 文字可能是空的——模型没带、格式不对、或者压根没识别出东西。
+  /// 那也照样返回：录音本身已经存好了，文字在编辑页还能补、还能重试。
+  void _pop() {
     Navigator.of(context).pop(
       RecordResult(
         relativePath: _relativePath!,
         duration: _elapsed,
-        transcript: transcript.isNotEmpty ? transcript : _transcript,
+        transcript: _transcript,
         waveform: List<double>.unmodifiable(_levels),
       ),
     );
@@ -289,7 +302,7 @@ class _RecordSheetState extends State<RecordSheet> {
   }
 
   Widget _buildRecorder() {
-    final bool finishing = _stage == _Stage.finishing;
+    final bool transcribing = _stage == _Stage.transcribing;
     final bool preparing = _stage == _Stage.preparing;
 
     return Column(
@@ -297,7 +310,7 @@ class _RecordSheetState extends State<RecordSheet> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            if (!finishing && !preparing)
+            if (!transcribing && !preparing)
               Container(
                 width: 8,
                 height: 8,
@@ -308,10 +321,10 @@ class _RecordSheetState extends State<RecordSheet> {
                   shape: BoxShape.circle,
                 ),
               ),
-            if (!finishing && !preparing) const SizedBox(width: 8),
+            if (!transcribing && !preparing) const SizedBox(width: 8),
             Text(
-              finishing
-                  ? '正在保存录音…'
+              transcribing
+                  ? (_canTranscribe ? '正在转文字…' : '正在保存录音…')
                   : preparing
                       ? '准备中…'
                       : _stage == _Stage.recording
@@ -342,9 +355,9 @@ class _RecordSheetState extends State<RecordSheet> {
           child: LiveWaveform(levels: _levels),
         ),
         const SizedBox(height: 16),
-        _buildTranscriptArea(),
+        _buildHintArea(),
         const SizedBox(height: 22),
-        if (finishing)
+        if (transcribing)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 10),
             child: SizedBox(
@@ -388,43 +401,34 @@ class _RecordSheetState extends State<RecordSheet> {
     );
   }
 
-  Widget _buildTranscriptArea() {
+  Widget _buildHintArea() {
     if (_stage == _Stage.preparing) return const SizedBox(height: 46);
 
-    if (!_speechAvailable) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-        ),
-        child: const Text(
-          '本机的语音识别不可用，这次只保存录音，文字可以录完后手动补充',
-          style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
-        ),
-      );
+    final String text;
+    if (_stage == _Stage.transcribing) {
+      text = _transcribeNote.isNotEmpty
+          ? _transcribeNote
+          : '录音已经存好，正在用本机的离线模型识别，稍等一下';
+    } else if (_canTranscribe) {
+      text = '说完点「完成」，会自动转成文字，识别全程在本机进行，不联网';
+    } else {
+      text = '本机没有可用的离线语音模型，这次只保存录音，文字可以录完后手动补充';
     }
 
     return Container(
       width: double.infinity,
-      constraints: const BoxConstraints(minHeight: 46, maxHeight: 120),
+      constraints: const BoxConstraints(minHeight: 46),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.background,
         borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
-      child: SingleChildScrollView(
-        reverse: true,
-        child: Text(
-          _transcript.isEmpty ? '正在识别，说话内容会实时出现在这里…' : _transcript,
-          style: TextStyle(
-            fontSize: 13.5,
-            height: 1.5,
-            color: _transcript.isEmpty
-                ? AppColors.textTertiary
-                : AppColors.textPrimary,
-          ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 12.5,
+          height: 1.5,
+          color: AppColors.textSecondary,
         ),
       ),
     );

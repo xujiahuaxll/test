@@ -46,11 +46,15 @@ enum MarkerSort {
   final String label;
 }
 
-/// 录音音质，决定编码码率与采样率。
+/// 录音音质。
+///
+/// 录出来的是 WAV（不压缩的 PCM），所以体积只由采样率决定，bitRate 只在
+/// 机型不支持 WAV、回落到 AAC 时才起作用。之所以不压缩，是因为录完要把
+/// 音频喂给本地的离线识别模型，模型吃的就是 PCM。
 enum AudioQuality {
-  saver('省空间', '64 kbps · 22 kHz', 64000, 22050),
-  standard('标准', '96 kbps · 44 kHz', 96000, 44100),
-  high('高音质', '128 kbps · 48 kHz', 128000, 48000);
+  saver('省空间', '16 kHz 单声道 · 约 1.9 MB/分钟', 64000, 16000),
+  standard('标准', '22 kHz 单声道 · 约 2.6 MB/分钟', 96000, 22050),
+  high('高音质', '44 kHz 单声道 · 约 5.3 MB/分钟', 128000, 44100);
 
   const AudioQuality(this.label, this.hint, this.bitRate, this.sampleRate);
 
@@ -74,18 +78,6 @@ enum PhotoQuality {
   final double? maxWidth;
 }
 
-/// 语音转写使用的识别语言，传给系统识别引擎。
-enum SpeechLocale {
-  mandarin('普通话', 'zh_CN'),
-  cantonese('粤语', 'yue_CN'),
-  english('English', 'en_US');
-
-  const SpeechLocale(this.label, this.id);
-
-  final String label;
-  final String id;
-}
-
 /// 定位超时可选的秒数。
 const List<int> kLocateTimeoutChoices = <int>[10, 20, 30, 60];
 
@@ -99,7 +91,6 @@ class AppSettings {
     this.locateAccuracy = LocateAccuracy.high,
     this.locateTimeoutSeconds = 20,
     this.reverseGeocode = true,
-    this.speechLocale = SpeechLocale.mandarin,
     this.audioQuality = AudioQuality.standard,
     this.photoQuality = PhotoQuality.standard,
     this.markerSort = MarkerSort.newestFirst,
@@ -115,7 +106,6 @@ class AppSettings {
 
   /// 定位后是否顺带把经纬度解析成文字地址。
   final bool reverseGeocode;
-  final SpeechLocale speechLocale;
   final AudioQuality audioQuality;
   final PhotoQuality photoQuality;
   final MarkerSort markerSort;
@@ -129,7 +119,6 @@ class AppSettings {
   static const String keyLocateAccuracy = 'locate_accuracy';
   static const String keyLocateTimeout = 'locate_timeout_seconds';
   static const String keyReverseGeocode = 'locate_reverse_geocode';
-  static const String keySpeechLocale = 'speech_locale';
   static const String keyAudioQuality = 'audio_quality';
   static const String keyPhotoQuality = 'photo_quality';
   static const String keyMarkerSort = 'list_sort';
@@ -146,7 +135,6 @@ class AppSettings {
     LocateAccuracy? locateAccuracy,
     int? locateTimeoutSeconds,
     bool? reverseGeocode,
-    SpeechLocale? speechLocale,
     AudioQuality? audioQuality,
     PhotoQuality? photoQuality,
     MarkerSort? markerSort,
@@ -160,7 +148,6 @@ class AppSettings {
       locateAccuracy: locateAccuracy ?? this.locateAccuracy,
       locateTimeoutSeconds: locateTimeoutSeconds ?? this.locateTimeoutSeconds,
       reverseGeocode: reverseGeocode ?? this.reverseGeocode,
-      speechLocale: speechLocale ?? this.speechLocale,
       audioQuality: audioQuality ?? this.audioQuality,
       photoQuality: photoQuality ?? this.photoQuality,
       markerSort: markerSort ?? this.markerSort,
@@ -177,7 +164,6 @@ class AppSettings {
       keyLocateAccuracy: locateAccuracy.name,
       keyLocateTimeout: '$locateTimeoutSeconds',
       keyReverseGeocode: reverseGeocode ? 'true' : 'false',
-      keySpeechLocale: speechLocale.name,
       keyAudioQuality: audioQuality.name,
       keyPhotoQuality: photoQuality.name,
       keyMarkerSort: markerSort.name,
@@ -199,8 +185,6 @@ class AppSettings {
       locateTimeoutSeconds:
           _timeoutOr(raw[keyLocateTimeout], fallback.locateTimeoutSeconds),
       reverseGeocode: _boolOr(raw[keyReverseGeocode], fallback.reverseGeocode),
-      speechLocale: _enumOr(SpeechLocale.values, raw[keySpeechLocale],
-          fallback.speechLocale),
       audioQuality: _enumOr(AudioQuality.values, raw[keyAudioQuality],
           fallback.audioQuality),
       photoQuality: _enumOr(PhotoQuality.values, raw[keyPhotoQuality],

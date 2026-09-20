@@ -5,7 +5,7 @@ publish_to: "none"
 # versionCode 是「检查更新」判定新旧的唯一可靠依据——它只增不减、没有
 # 「1.9 和 1.10 谁大」的歧义。每发一版都要把它 +1，忘了改的话客户端
 # 拿两边一比发现一样大，就永远判不出有新版本。
-version: 1.1.0+2
+version: 1.2.0+3
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -26,7 +26,6 @@ dependencies:
   image_picker: ^1.1.2
   record: ^7.1.1
   just_audio: ^0.10.6
-  speech_to_text: ^7.0.0
   permission_handler: ^12.0.1
   uuid: ^4.4.0
   amap_map: ^1.0.15
@@ -38,6 +37,16 @@ dependencies:
   http: ^1.2.2
   crypto: ^3.0.5
   package_info_plus: ^10.2.1
+
+  # 离线语音转文字。模型跟着 APK 走，识别全程不联网。
+  # 注意：Android 端默认实现包只有 sherpa_onnx_android_arm64，armv7 老机器
+  # 装不上识别功能（录音本身不受影响）。
+  sherpa_onnx: ^1.13.8
+
+  # 分享。shareXFiles 能一次带图 + 文字；微信只收图，所以链接另做成
+  # 二维码画进图里（qr 是纯 Dart 的二维码矩阵生成，不带平台代码）。
+  share_plus: ^13.3.0
+  qr: ^3.0.2
 
 dependency_overrides:
   # 上游 amap_map 1.0.15 的 android 模块写死 compileSdkVersion 35，
@@ -59,3 +68,8 @@ flutter:
     # 应用图标的原稿。启动图标由 scripts/make-launcher-icons.py 从它生成，
     # 留在这里是为了以后改图标时有据可依。
     - assets/logo.png
+
+    # 离线语音识别模型。文件不在仓库里，构建前由 scripts/fetch-asr-model.sh
+    # 下载到这里；目录是空的也能 build，只是打出来的包没有识别功能。
+    # 仓库里留了个 .gitkeep，因为这个目录不存在的话 flutter build 会直接报错。
+    - assets/asr/

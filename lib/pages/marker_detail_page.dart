@@ -2,11 +2,15 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../data/marker_repository.dart';
 import '../models/location_mark.dart';
 import '../services/media_store.dart';
 import '../theme/app_theme.dart';
+import '../utils/share_card.dart';
 import '../widgets/amap_preview.dart';
 import '../widgets/common.dart';
 import '../widgets/fake_map.dart';
@@ -28,6 +32,7 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
   late LocationMark _mark = widget.mark;
   final PageController _photoController = PageController();
   int _photoIndex = 0;
+  bool _sharing = false;
 
   @override
   void dispose() {
@@ -76,6 +81,39 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
     Navigator.of(context).pop();
   }
 
+  /// 分享：画一张带二维码的卡片发出去。
+  ///
+  /// 为什么非得是图片：微信的分享接收界面只收图片，同一条分享里的文字会被
+  /// 直接丢掉。所以链接得画进图里做成二维码，对方长按识别就能用高德打开，
+  /// 不用装这个 App。发给别的应用时，那段文字照样带着。
+  Future<void> _share() async {
+    if (_sharing) return;
+    setState(() => _sharing = true);
+    try {
+      final Uint8List png = await ShareCard.render(_mark);
+      // 落到临时目录：分享是把文件交给别的应用读，得有个真实路径。
+      final Directory dir = await getTemporaryDirectory();
+      final File file = File(p.join(dir.path, 'caidian-share.png'));
+      await file.writeAsBytes(png, flush: true);
+
+      if (!mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: <XFile>[XFile(file.path, mimeType: 'image/png')],
+          text: ShareLink.caption(_mark),
+          subject: _mark.name,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('生成分享图失败：$e')));
+    } finally {
+      if (mounted) setState(() => _sharing = false);
+    }
+  }
+
   Future<void> _copyCoordinate() async {
     await Clipboard.setData(ClipboardData(text: _mark.coordinateText));
     if (!mounted) return;
@@ -112,6 +150,12 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
               onTap: () => Navigator.of(context).maybePop(),
             ),
             actions: <Widget>[
+              _GlassIcon(
+                icon: Icons.ios_share,
+                onTap: _share,
+                busy: _sharing,
+              ),
+              const SizedBox(width: 8),
               _GlassIcon(icon: Icons.edit_outlined, onTap: _edit),
               const SizedBox(width: 8),
               _GlassIcon(
@@ -207,19 +251,17 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
                   ),
                   const SizedBox(height: 16),
                   _LocationBlock(mark: mark, onCopy: _copyCoordinate),
-                  if (mark.hasVoice) ...<Widget>[
-                    const SizedBox(height: 14),
-                    _VoiceBlock(mark: mark),
-                  ],
+                  // 先文字后语音。查看的时候没人想为了知道自己当初说了
+                  // 什么，把录音从头听一遍——文字才是拿来扫一眼的。
                   if (mark.note.isNotEmpty) ...<Widget>[
                     const SizedBox(height: 14),
                     SectionCard(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: <Widget>[
-                          const SectionLabel(
+                          SectionLabel(
                             icon: Icons.notes_outlined,
-                            title: '备注',
+                            title: mark.hasVoice ? '备注（语音转写）' : '备注',
                           ),
                           const SizedBox(height: 10),
                           SelectableText(
@@ -264,6 +306,11 @@ class _MarkerDetailPageState extends State<MarkerDetailPage> {
                         ],
                       ),
                     ),
+                  ],
+                  // 语音放最后。用户明确要求的顺序：文字在上，语音在最后。
+                  if (mark.hasVoice) ...<Widget>[
+                    const SizedBox(height: 14),
+                    _VoiceBlock(mark: mark),
                   ],
                   const SizedBox(height: 22),
                   Row(
@@ -314,11 +361,16 @@ class _GlassIcon extends StatelessWidget {
     required this.icon,
     required this.onTap,
     this.color = AppColors.textPrimary,
+    this.busy = false,
   });
 
   final IconData icon;
   final VoidCallback onTap;
   final Color color;
+
+  /// 正在忙时换成转圈并挡住重复点击——画分享图要一两秒，
+  /// 没有反馈的话用户会以为没点上，连点好几下。
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -327,12 +379,23 @@ class _GlassIcon extends StatelessWidget {
         color: Colors.white.withValues(alpha: 0.9),
         shape: const CircleBorder(),
         child: InkWell(
-          onTap: onTap,
+          onTap: busy ? null : onTap,
           customBorder: const CircleBorder(),
           child: SizedBox(
             width: 36,
             height: 36,
-            child: Icon(icon, size: 18, color: color),
+            child: busy
+                ? Center(
+                    child: SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: color,
+                      ),
+                    ),
+                  )
+                : Icon(icon, size: 18, color: color),
           ),
         ),
       ),

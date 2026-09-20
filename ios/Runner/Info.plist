@@ -14,8 +14,6 @@
 	<string>用于记录标记的当前位置</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>用于录制语音备注</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>用于把语音备注转成文字</string>
 	<key>NSCameraUsageDescription</key>
 	<string>用于给标记拍照</string>
 	<key>NSPhotoLibraryUsageDescription</key>
