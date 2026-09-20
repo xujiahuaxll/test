@@ -93,7 +93,10 @@ jobs:
           AMAP_ANDROID_KEY: ${{ secrets.AMAP_ANDROID_KEY }}
           AMAP_IOS_KEY: ${{ secrets.AMAP_IOS_KEY }}
         run: |
+          # 只给这两种 CPU 做 AOT。x86_64 的那份已经被 abiFilters 挡在包外，
+          # 这里再说一遍是为了省掉白编译它的时间。
           flutter build apk --release \
+            --target-platform android-arm64,android-arm \
             --dart-define=AMAP_ANDROID_KEY="${AMAP_ANDROID_KEY:-}" \
             --dart-define=AMAP_IOS_KEY="${AMAP_IOS_KEY:-}"
           ls -lh build/app/outputs/flutter-apk/

@@ -58,10 +58,15 @@ android {
 
         // 只带手机上真会用到的两种 CPU。
         //
-        // sherpa-onnx（离线语音识别）给四种 ABI 各带一套原生库，加起来
-        // 105 MB，其中 x86/x86_64 那 61 MB 只有模拟器用得上——这是给真人
-        // 装的 App，白白让安装包大一倍没有意义。
+        // sherpa-onnx（离线语音识别）给每种 ABI 都带一套原生库，x86_64 那
+        // 一套连同 Flutter 引擎自己的 x86_64 库加起来约 51 MB，只有模拟器
+        // 用得上——这是给真人装的 App，没必要让安装包白大一圈。
         // armeabi-v7a 留着：老一点的手机还在用，去掉它们就装不了。
+        //
+        // 注意：这里光写没用，还得配上 android/gradle.properties 里的
+        // disable-abi-filtering=true。Flutter 的 Gradle 插件默认会把这份
+        // abiFilters 整个清掉换成它自己的，两处是一对，删掉任何一处都会
+        // 悄悄失效（CI 的「校验语音模型进包了」那步会抓到）。
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
