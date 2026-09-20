@@ -298,4 +298,75 @@ void main() {
     await repo.delete((await repo.findById('m1'))!);
     expect(await repo.referencedMediaPaths(), <String>{'photos/c.jpg'});
   });
+  group('批量写入与批量删除', () {
+    test('saveAll 一次写完，监听者只被通知一次', () async {
+      int notified = 0;
+      void count() => notified++;
+      repo.addListener(count);
+      addTearDown(() => repo.removeListener(count));
+
+      await repo.saveAll(<LocationMark>[
+        buildMark(id: 'a', name: '甲'),
+        buildMark(id: 'b', name: '乙'),
+        buildMark(id: 'c', name: '丙'),
+      ]);
+
+      expect(await repo.count(), 3);
+      expect(notified, 1, reason: '逐条 save 会通知三次，首页跟着重查三遍');
+    });
+
+    test('saveAll 也会覆盖已有的记录、带上标签', () async {
+      await repo.save(buildMark(id: 'a', name: '旧名'));
+      await repo.saveAll(<LocationMark>[
+        buildMark(id: 'a', name: '新名', tags: <String>['美食']),
+      ]);
+
+      final LocationMark? got = await repo.findById('a');
+      expect(got!.name, '新名');
+      expect(got.tags, <String>['美食']);
+      expect(await repo.count(), 1);
+    });
+
+    test('saveAll 传空列表什么都不做', () async {
+      await repo.saveAll(const <LocationMark>[]);
+      expect(await repo.count(), 0);
+    });
+
+    test('deleteAllByIds 连媒体文件一起清掉', () async {
+      final File photo = File('${tempDir.path}/photos/p.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(<int>[1, 2, 3]);
+      final File audio = File('${tempDir.path}/audio/a.m4a')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(<int>[4, 5]);
+
+      await repo.save(buildMark(
+        id: 'a',
+        photos: <String>['photos/p.jpg'],
+        audioPath: 'audio/a.m4a',
+      ));
+      await repo.save(buildMark(id: 'b'));
+
+      await repo.deleteAllByIds(<String>['a']);
+
+      expect(await repo.count(), 1);
+      expect(await repo.findById('b'), isNotNull);
+      // 只有 id 时 delete() 不知道该删哪些文件，所以这里要先查出来再删
+      expect(photo.existsSync(), isFalse);
+      expect(audio.existsSync(), isFalse);
+    });
+
+    test('deleteAllByIds 传空列表什么都不做', () async {
+      await repo.save(buildMark(id: 'a'));
+      await repo.deleteAllByIds(const <String>[]);
+      expect(await repo.count(), 1);
+    });
+
+    test('deleteAllByIds 遇到不存在的 id 不报错', () async {
+      await repo.save(buildMark(id: 'a'));
+      await repo.deleteAllByIds(<String>['a', '根本没有这个']);
+      expect(await repo.count(), 0);
+    });
+  });
+
 }

@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../data/marker_repository.dart';
+import '../data/settings_repository.dart';
 import '../models/location_mark.dart';
+import '../services/cloud_sync.dart';
 import '../services/settings_controller.dart';
+import '../services/sync_runner.dart';
 import '../theme/app_theme.dart';
 import '../widgets/marker_card.dart';
 import '../widgets/nav_app_sheet.dart';
@@ -33,6 +36,10 @@ class _MarkerListPageState extends State<MarkerListPage> {
   int _total = 0;
   Timer? _debounce;
 
+  /// 云端三项齐全才显示同步按钮。
+  bool _cloudReady = false;
+  bool _syncing = false;
+
   @override
   void initState() {
     super.initState();
@@ -40,6 +47,7 @@ class _MarkerListPageState extends State<MarkerListPage> {
     // 设置页改了排序方式后列表要跟着重排。
     SettingsController.instance.addListener(_reload);
     _reload();
+    _refreshCloudReady();
   }
 
   @override
@@ -95,6 +103,79 @@ class _MarkerListPageState extends State<MarkerListPage> {
       MaterialPageRoute<void>(builder: (_) => const SettingsPage()),
     );
     await _reload();
+    await _refreshCloudReady();
+  }
+
+  /// 走一次同步：拉取 -> 报差异 -> 用户选策略 -> 落地。
+  ///
+  /// 中间那次确认不能省。三种策略里两种会删数据，而删掉的照片和录音
+  /// 是找不回来的——得让用户看清各删多少条再点。
+  Future<void> _sync() async {
+    final SettingsRepository repo = SettingsRepository.instance;
+    final String api =
+        (await repo.getString(SettingsRepository.keyCloudApi) ?? '').trim();
+    final String account =
+        (await repo.getString(SettingsRepository.keyCloudAccount) ?? '').trim();
+    final String password =
+        (await repo.getString(SettingsRepository.keyCloudPassword) ?? '').trim();
+    if (api.isEmpty || account.isEmpty || password.isEmpty) {
+      _toast('请先到设置里填好云端地址、手机号和密码');
+      return;
+    }
+
+    setState(() => _syncing = true);
+    final CloudSync cloud =
+        CloudSync(baseUrl: api, account: account, password: password);
+    final SyncRunner runner = SyncRunner(cloud: cloud);
+    try {
+      final SyncPreparation prep = await runner.prepare();
+      if (!mounted) return;
+
+      if (prep.diff.isEmpty) {
+        _toast('两边已经一致，没有要同步的');
+        return;
+      }
+      final SyncStrategy? strategy = await showModalBottomSheet<SyncStrategy>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        isScrollControlled: true,
+        builder: (_) => _SyncSheet(diff: prep.diff),
+      );
+      if (strategy == null || !mounted) return;
+
+      final SyncOutcome outcome = await runner.apply(prep, strategy);
+      if (!mounted) return;
+      await _reload();
+      if (mounted) _toast('同步完成：${outcome.describe()}');
+    } on CloudFailure catch (e) {
+      if (mounted) _toast(e.message);
+    } finally {
+      cloud.close();
+      if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _refreshCloudReady() async {
+    final SettingsRepository repo = SettingsRepository.instance;
+    final bool ready = <String>[
+          SettingsRepository.keyCloudApi,
+          SettingsRepository.keyCloudAccount,
+          SettingsRepository.keyCloudPassword,
+        ].length ==
+        (await Future.wait(<Future<String?>>[
+          repo.getString(SettingsRepository.keyCloudApi),
+          repo.getString(SettingsRepository.keyCloudAccount),
+          repo.getString(SettingsRepository.keyCloudPassword),
+        ]))
+            .where((String? v) => (v ?? '').trim().isNotEmpty)
+            .length;
+    if (!mounted) return;
+    setState(() => _cloudReady = ready);
   }
 
   Future<void> _openDetail(LocationMark mark) async {
@@ -142,6 +223,8 @@ class _MarkerListPageState extends State<MarkerListPage> {
                   total: _total,
                   onOpenMap: _openMap,
                   onOpenSettings: _openSettings,
+                  onSync: _cloudReady ? _sync : null,
+                  syncing: _syncing,
                 ),
               ),
               SliverToBoxAdapter(
@@ -221,11 +304,17 @@ class _Header extends StatelessWidget {
     required this.total,
     required this.onOpenMap,
     required this.onOpenSettings,
+    this.onSync,
+    this.syncing = false,
   });
 
   final int total;
   final VoidCallback onOpenMap;
   final VoidCallback onOpenSettings;
+
+  /// 没配好云端时为 null，同步按钮就不显示——点了也没处发去。
+  final VoidCallback? onSync;
+  final bool syncing;
 
   @override
   Widget build(BuildContext context) {
@@ -247,6 +336,15 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          if (onSync != null) ...<Widget>[
+            _RoundIconButton(
+              icon: Icons.sync,
+              tooltip: '与云端同步',
+              onTap: onSync!,
+              busy: syncing,
+            ),
+            const SizedBox(width: 8),
+          ],
           _RoundIconButton(
             icon: Icons.map_outlined,
             tooltip: '在地图上查看全部',
@@ -264,16 +362,161 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// 同步前让用户选策略。
+///
+/// 三种策略的后果差别很大，所以每一项都把「这一项会发生什么」当场算出来
+/// 写在下面，而不是笼统写「同步」。会删数据的那两项还要标红——
+/// 删掉的照片和录音找不回来。
+class _SyncSheet extends StatelessWidget {
+  const _SyncSheet({required this.diff});
+
+  final SyncDiff diff;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text('这次要怎么同步',
+                  style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text(
+                _summary(),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 12),
+              for (final SyncStrategy s in SyncStrategy.values)
+                _StrategyTile(
+                  strategy: s,
+                  outcome: diff.outcomeFor(s),
+                  onTap: () => Navigator.of(context).pop(s),
+                ),
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('取消'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _summary() {
+    final List<String> bits = <String>[
+      if (diff.onlyLocal.isNotEmpty) '本机独有 ${diff.onlyLocal.length} 条',
+      if (diff.onlyServer.isNotEmpty) '云端独有 ${diff.onlyServer.length} 条',
+      if (diff.localNewer.isNotEmpty) '本机较新 ${diff.localNewer.length} 条',
+      if (diff.serverNewer.isNotEmpty) '云端较新 ${diff.serverNewer.length} 条',
+    ];
+    return bits.isEmpty ? '两边一致' : bits.join(' · ');
+  }
+}
+
+class _StrategyTile extends StatelessWidget {
+  const _StrategyTile({
+    required this.strategy,
+    required this.outcome,
+    required this.onTap,
+  });
+
+  final SyncStrategy strategy;
+  final SyncOutcome outcome;
+  final VoidCallback onTap;
+
+  bool get _deletes => outcome.localDeleted > 0 || outcome.remoteDeleted > 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        strategy.label,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        outcome.describe(),
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          height: 1.45,
+                          color: _deletes
+                              ? AppColors.danger
+                              : AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (_deletes)
+                  const Icon(Icons.warning_amber_rounded,
+                      size: 18, color: AppColors.danger)
+                else
+                  const Icon(Icons.chevron_right,
+                      size: 18, color: AppColors.textTertiary),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _RoundIconButton extends StatelessWidget {
   const _RoundIconButton({
     required this.icon,
     required this.tooltip,
     required this.onTap,
+    this.busy = false,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
+
+  /// 忙的时候换成转圈，并挡住重复点击——同步跑两遍会把差异算乱。
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -283,12 +526,20 @@ class _RoundIconButton extends StatelessWidget {
         color: AppColors.surface,
         shape: const CircleBorder(),
         child: InkWell(
-          onTap: onTap,
+          onTap: busy ? null : onTap,
           customBorder: const CircleBorder(),
           child: SizedBox(
             width: 42,
             height: 42,
-            child: Icon(icon, size: 20, color: AppColors.primary),
+            child: busy
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
+                  )
+                : Icon(icon, size: 20, color: AppColors.primary),
           ),
         ),
       ),

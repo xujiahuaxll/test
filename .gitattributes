@@ -1,0 +1,33 @@
+# 换行符规则。
+#
+# 起因：Git for Windows 默认 core.autocrlf=true，检出时把 LF 换成 CRLF。
+# shell 脚本被这么一换就跑不了了——`set -euo pipefail` 变成
+# `set -euo pipefail\r`，bash 报 "pipefail\r: invalid option name"，
+# 而那个 \r 还会让报错信息回车覆盖前半行，看着像是脚本本身有语法错。
+#
+# 下面这些文件不管在哪个平台检出，都强制用 LF。
+
+* text=auto
+
+*.sh      text eol=lf
+*.bash    text eol=lf
+*.properties text eol=lf
+gradlew   text eol=lf
+
+# Windows 上的批处理反过来，必须是 CRLF
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+gradlew.bat text eol=crlf
+
+# 二进制文件不要做任何换行转换，转了就坏
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.webp    binary
+*.jks     binary
+*.keystore binary
+*.apk     binary
+*.aar     binary
+*.jar     binary
+*.so      binary
+*.m4a     binary

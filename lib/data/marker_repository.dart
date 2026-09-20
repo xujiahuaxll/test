@@ -113,6 +113,57 @@ class MarkerRepository extends ChangeNotifier {
   Future<void> save(LocationMark mark) async {
     final Database db = await _db;
     await db.transaction((Transaction txn) async {
+      await _writeInto(txn, mark);
+    });
+    notifyListeners();
+  }
+
+  /// 批量写入。同步一次可能落几十条，逐条调 save 会开几十个事务、
+  /// 通知几十次，首页跟着重查几十遍。这里一个事务写完、最后只通知一次。
+  Future<void> saveAll(List<LocationMark> marks) async {
+    if (marks.isEmpty) return;
+    final Database db = await _db;
+    await db.transaction((Transaction txn) async {
+      for (final LocationMark mark in marks) {
+        await _writeInto(txn, mark);
+      }
+    });
+    notifyListeners();
+  }
+
+  /// 按 id 批量删除，媒体文件一并清掉。
+  ///
+  /// delete() 要完整的 LocationMark 才知道该删哪些文件，而同步时手上
+  /// 往往只有 id，所以这里先把它们查出来。
+  Future<void> deleteAllByIds(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final Database db = await _db;
+    final String placeholders = List<String>.filled(ids.length, '?').join(',');
+    final List<Map<String, Object?>> rows = await db.query(
+      AppDatabase.tableMarkers,
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
+    final List<LocationMark> marks = await _hydrate(db, rows);
+
+    await db.delete(
+      AppDatabase.tableMarkers,
+      where: 'id IN ($placeholders)',
+      whereArgs: ids,
+    );
+    for (final LocationMark mark in marks) {
+      for (final String path in mark.photoPaths) {
+        await _mediaStore.deleteFile(path);
+      }
+      final String? audio = mark.audioPath;
+      if (audio != null) await _mediaStore.deleteFile(audio);
+    }
+    notifyListeners();
+  }
+
+  /// save 与 saveAll 共用的那一份写入逻辑，事务由调用方开。
+  Future<void> _writeInto(Transaction txn, LocationMark mark) async {
+    {
       await txn.insert(
         AppDatabase.tableMarkers,
         mark.toRow(),
@@ -153,8 +204,7 @@ class MarkerRepository extends ChangeNotifier {
           'position': i,
         });
       }
-    });
-    notifyListeners();
+    }
   }
 
   /// 删除标记，同时清掉它占用的照片与录音文件。

@@ -42,6 +42,16 @@ class _SettingsPageState extends State<SettingsPage> {
   AppVersion? _version;
   bool _checkingUpgrade = false;
 
+  /// 云端同步的三项配置。三项齐全才算配好，缺一不可。
+  String _cloudApi = '';
+  String _cloudAccount = '';
+  String _cloudPassword = '';
+
+  bool get _cloudReady =>
+      _cloudApi.isNotEmpty &&
+      _cloudAccount.isNotEmpty &&
+      _cloudPassword.isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadUsage();
     _loadSignature();
     _loadUpgradeConfig();
+    _loadCloudConfig();
   }
 
   @override
@@ -88,6 +99,51 @@ class _SettingsPageState extends State<SettingsPage> {
       _upgradeApi = api;
       _version = version;
     });
+  }
+
+  Future<void> _loadCloudConfig() async {
+    final SettingsRepository repo = SettingsRepository.instance;
+    final String api =
+        (await repo.getString(SettingsRepository.keyCloudApi) ?? '').trim();
+    final String account =
+        (await repo.getString(SettingsRepository.keyCloudAccount) ?? '').trim();
+    final String password =
+        (await repo.getString(SettingsRepository.keyCloudPassword) ?? '').trim();
+    if (!mounted) return;
+    setState(() {
+      _cloudApi = api;
+      _cloudAccount = account;
+      _cloudPassword = password;
+    });
+  }
+
+  /// 云端三项共用一个编辑流程，省得写三遍一模一样的代码。
+  Future<void> _editCloudField({
+    required String key,
+    required String title,
+    required String description,
+    required String current,
+    required ValueChanged<String> onSaved,
+    String hint = '',
+    bool obscure = false,
+    TextInputType keyboard = TextInputType.text,
+  }) async {
+    final String? next = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextConfigDialog(
+        title: title,
+        description: description,
+        initial: current,
+        hint: hint,
+        obscure: obscure,
+        keyboard: keyboard,
+      ),
+    );
+    if (next == null || !mounted) return;
+    await SettingsRepository.instance.setString(key, next);
+    if (!mounted) return;
+    setState(() => onSaved(next));
+    _toast(next.isEmpty ? '已清空' : '已保存');
   }
 
   Future<void> _loadUsage() async {
@@ -247,6 +303,67 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
           ),
           _Group(
+            icon: Icons.cloud_outlined,
+            title: '云端存储',
+            children: <Widget>[
+              _OptionRow(
+                title: '同步服务地址',
+                subtitle: _cloudApi.isEmpty
+                    ? '没配地址，同步不可用。点这里填自己的接口'
+                    : _cloudApi,
+                value: _cloudApi.isEmpty ? '未填写' : '已填写',
+                onTap: () => _editCloudField(
+                  key: SettingsRepository.keyCloudApi,
+                  title: '同步服务地址',
+                  description: '标记数据会发到这个地址上。接口格式见仓库里的 '
+                      'docs/api.md。\n\n'
+                      '务必用 https —— 账号密码和你的全部标记都要经过它。',
+                  current: _cloudApi,
+                  hint: 'https://example.com/sync',
+                  keyboard: TextInputType.url,
+                  onSaved: (String v) => _cloudApi = v,
+                ),
+              ),
+              _OptionRow(
+                title: '手机号',
+                subtitle: _cloudAccount.isEmpty ? '同步时用它标识是谁的数据' : _cloudAccount,
+                value: _cloudAccount.isEmpty ? '未填写' : '已填写',
+                onTap: () => _editCloudField(
+                  key: SettingsRepository.keyCloudAccount,
+                  title: '手机号',
+                  description: '同步时随请求一起发给你的服务端，用来区分这是谁的数据。',
+                  current: _cloudAccount,
+                  hint: '13800000000',
+                  keyboard: TextInputType.phone,
+                  onSaved: (String v) => _cloudAccount = v,
+                ),
+              ),
+              _OptionRow(
+                title: '密码',
+                subtitle: _cloudPassword.isEmpty
+                    ? '和手机号一起发给服务端校验'
+                    : '已设置（不显示）',
+                value: _cloudPassword.isEmpty ? '未填写' : '已填写',
+                onTap: () => _editCloudField(
+                  key: SettingsRepository.keyCloudPassword,
+                  title: '密码',
+                  description: '这个密码以明文存在本机数据库里。\n\n'
+                      '所以别用你其它账号的密码，也别用会心疼的那个。',
+                  current: _cloudPassword,
+                  obscure: true,
+                  onSaved: (String v) => _cloudPassword = v,
+                ),
+              ),
+              _InfoRow(
+                title: '状态',
+                value: _cloudReady ? '可以同步' : '未启用',
+                hint: _cloudReady
+                    ? '回列表页，右上角的同步按钮就能用了'
+                    : '三项都填齐才会启用同步',
+              ),
+            ],
+          ),
+          _Group(
             icon: Icons.system_update_outlined,
             title: '更新',
             children: <Widget>[
@@ -291,7 +408,8 @@ class _SettingsPageState extends State<SettingsPage> {
           const Padding(
             padding: EdgeInsets.only(top: 18),
             child: Text(
-              '标记、照片、录音和这里的配置全部保存在本机，不会上传到任何服务器。',
+              '标记、照片、录音和这里的配置都存在本机。\n'
+              '只有你自己配了云端地址、并主动点同步时，数据才会发出去。',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -868,6 +986,7 @@ class _TextConfigDialog extends StatefulWidget {
     required this.description,
     this.initial = '',
     this.hint = '',
+    this.obscure = false,
     this.keyboard = TextInputType.text,
   });
 
@@ -875,6 +994,7 @@ class _TextConfigDialog extends StatefulWidget {
   final String description;
   final String initial;
   final String hint;
+  final bool obscure;
   final TextInputType keyboard;
 
   @override
@@ -914,6 +1034,7 @@ class _TextConfigDialogState extends State<_TextConfigDialog> {
             controller: _controller,
             autofocus: true,
             maxLines: 1,
+            obscureText: widget.obscure,
             autocorrect: false,
             enableSuggestions: false,
             keyboardType: widget.keyboard,

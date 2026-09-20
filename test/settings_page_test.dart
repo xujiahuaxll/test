@@ -405,7 +405,8 @@ void main() {
       await pumpPage(tester);
 
       expect(find.text('检查更新地址'), findsOneWidget);
-      expect(find.text('未填写'), findsOneWidget);
+      // 断言「检查更新」这个动作行在不在，而不是数「未填写」出现几次——
+      // 云端存储那组也有「未填写」，数个数会随着别处加配置项而误报。
       expect(find.text('检查更新'), findsNothing);
     });
 
@@ -426,7 +427,6 @@ void main() {
             .getString(SettingsRepository.keyUpgradeApi),
         'https://example.com/latest',
       );
-      expect(find.text('已填写'), findsOneWidget);
       expect(find.text('检查更新'), findsOneWidget);
     });
 
@@ -445,7 +445,6 @@ void main() {
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
 
-      expect(find.text('未填写'), findsOneWidget);
       expect(find.text('检查更新'), findsNothing);
       expect(find.text('已关闭检查更新'), findsOneWidget);
     });

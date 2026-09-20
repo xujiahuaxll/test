@@ -87,6 +87,22 @@ class MediaStore {
     return (relative: relative, absolute: p.join(dir.parent.path, relative));
   }
 
+  /// 把一段字节写进媒体目录，返回相对路径。
+  ///
+  /// 从云端拉回来的照片和录音走这里——它们不像相机给的那样先落成临时文件，
+  /// 手上只有字节。
+  Future<String> saveBytes(
+    List<int> bytes, {
+    required String folder,
+    required String extension,
+  }) async {
+    final Directory dir = await _subDir(folder);
+    final String ext = extension.startsWith('.') ? extension : '.$extension';
+    final String relative = p.join(folder, '${_uuid.v4()}$ext');
+    await File(p.join(dir.parent.path, relative)).writeAsBytes(bytes);
+    return relative;
+  }
+
   Future<void> deleteFile(String relativePath) async {
     final File file = await resolve(relativePath);
     if (await file.exists()) {
