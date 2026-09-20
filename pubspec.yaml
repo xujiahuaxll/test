@@ -1,5 +1,5 @@
 name: location_marker
-description: "地点标记 App —— 本地地点记录（内置数据库，不依赖任何服务端）"
+description: "踩点 —— 把去过的地方记下来（本地优先，可选云端同步）"
 publish_to: "none"
 version: 1.0.0+1
 
@@ -29,6 +29,12 @@ dependencies:
   x_amap_base: ^1.0.3
   url_launcher: ^6.3.1
 
+  # 检查更新与云端同步用。这是本仓库第一个联网依赖——在此之前 App
+  # 除了高德 SDK 拉瓦片之外不发任何网络请求。
+  http: ^1.2.2
+  crypto: ^3.0.5
+  package_info_plus: ^10.2.1
+
 dependency_overrides:
   # 上游 amap_map 1.0.15 的 android 模块写死 compileSdkVersion 35，
   # 与要求编译到 36 的依赖冲突，用打了补丁的本地副本，见
@@ -44,3 +50,8 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    # 应用图标的原稿。启动图标由 scripts/make-launcher-icons.py 从它生成，
+    # 留在这里是为了以后改图标时有据可依。
+    - assets/logo.png

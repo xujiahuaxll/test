@@ -21,14 +21,14 @@ Future<void> main() async {
   runApp(const LocationMarkerApp());
 }
 
-/// 地点标记 App：数据全部存在本机 SQLite 与应用私有目录，不连任何服务端。
+/// 踩点：数据存在本机 SQLite 与应用私有目录，只有主动点同步时才联网。
 class LocationMarkerApp extends StatelessWidget {
   const LocationMarkerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '地点标记',
+      title: '踩点',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       home: const PrivacyGate(child: MarkerListPage()),

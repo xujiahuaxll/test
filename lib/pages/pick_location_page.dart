@@ -650,7 +650,12 @@ class _SearchBox extends StatelessWidget {
 }
 
 /// 底部：当前选中的地点 + 附近可选列表 + 确认按钮。
-class _PickPanel extends StatelessWidget {
+///
+/// 附近列表默认收起。展开着的话面板高约 340，顶边越过屏幕中线，
+/// 正好把中心那枚图钉盖住——而图钉指的就是会被记下来的坐标，看不见它
+/// 就没法对准。地图控件没有 padding 参数（查过 AMapWidget 的构造参数），
+/// 没法把相机中心挪开，只能从这头压高度。
+class _PickPanel extends StatefulWidget {
   const _PickPanel({
     required this.placeName,
     required this.address,
@@ -671,6 +676,22 @@ class _PickPanel extends StatelessWidget {
   final ValueChanged<AmapPlace> onPickNearby;
   final VoidCallback onConfirm;
 
+  @override
+  State<_PickPanel> createState() => _PickPanelState();
+}
+
+class _PickPanelState extends State<_PickPanel> {
+  bool _expanded = false;
+
+  String? get placeName => widget.placeName;
+  String? get address => widget.address;
+  bool get resolving => widget.resolving;
+  String get coordinate => widget.coordinate;
+  List<AmapPlace> get nearby => widget.nearby;
+  String? get nearbyError => widget.nearbyError;
+  ValueChanged<AmapPlace> get onPickNearby => widget.onPickNearby;
+  VoidCallback get onConfirm => widget.onConfirm;
+
   String? get title {
     if (placeName?.isNotEmpty == true) return placeName;
     if (address?.isNotEmpty == true) return address;
@@ -685,7 +706,13 @@ class _PickPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // 封顶在屏幕高度的 45%：屏幕中线在 50%，留出这 5% 的余量，
+    // 面板的顶边就永远够不着中心那枚图钉。
+    final double maxHeight = MediaQuery.sizeOf(context).height * 0.45;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
       decoration: BoxDecoration(
         color: AppColors.surface,
@@ -742,7 +769,7 @@ class _PickPanel extends StatelessWidget {
                 ?.copyWith(color: AppColors.textTertiary),
           ),
           const SizedBox(height: 10),
-          _buildNearby(context),
+          Flexible(child: _buildNearby(context)),
           const SizedBox(height: 12),
           FilledButton(
             onPressed: onConfirm,
@@ -752,6 +779,7 @@ class _PickPanel extends StatelessWidget {
             child: const Text('使用这个位置'),
           ),
         ],
+      ),
       ),
     );
   }
@@ -774,16 +802,54 @@ class _PickPanel extends StatelessWidget {
       );
     }
 
+    // 收起态只留一条可点的横栏。展开了才占地方，图钉不会被盖住。
+    if (!_expanded) {
+      return InkWell(
+        onTap: () => setState(() => _expanded = true),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: <Widget>[
+              const Icon(Icons.near_me_outlined,
+                  size: 17, color: AppColors.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '附近还有 ${nearby.length} 个地点可选',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const Icon(Icons.expand_less,
+                  size: 20, color: AppColors.textTertiary),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Text(
-          '拖得不够准时，直接从附近选一个',
-          style: Theme.of(context).textTheme.bodySmall,
+        InkWell(
+          onTap: () => setState(() => _expanded = false),
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '拖得不够准时，直接从附近选一个',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                const Icon(Icons.expand_more,
+                    size: 20, color: AppColors.textTertiary),
+              ],
+            ),
+          ),
         ),
-        const SizedBox(height: 6),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 168),
+        Flexible(
           child: ListView.separated(
             shrinkWrap: true,
             padding: EdgeInsets.zero,

@@ -1,15 +1,21 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../config/amap_config.dart';
 import '../data/marker_repository.dart';
+import '../data/settings_repository.dart';
 import '../models/app_settings.dart';
 import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
 import '../services/media_store.dart';
 import '../services/navigation_launcher.dart';
 import '../services/settings_controller.dart';
+import '../services/upgrade_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/common.dart';
 import '../widgets/privacy_gate.dart';
@@ -31,12 +37,18 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _cleaning = false;
   AppSignature? _signature;
 
+  /// 检查更新的服务地址与本机版本。地址为空表示还没配。
+  String _upgradeApi = '';
+  AppVersion? _version;
+  bool _checkingUpgrade = false;
+
   @override
   void initState() {
     super.initState();
     _controller.addListener(_onSettingsChanged);
     _loadUsage();
     _loadSignature();
+    _loadUpgradeConfig();
   }
 
   @override
@@ -54,6 +66,28 @@ class _SettingsPageState extends State<SettingsPage> {
         await AmapLocationService.instance.appSignature();
     if (!mounted) return;
     setState(() => _signature = signature);
+  }
+
+  Future<void> _loadUpgradeConfig() async {
+    final String api =
+        (await SettingsRepository.instance.getString(
+              SettingsRepository.keyUpgradeApi,
+            ) ??
+            '')
+            .trim();
+    // 读版本号走的是平台通道，在没有原生实现的环境里会抛。
+    // 它只是显示用的，不该把整个设置页拖垮。
+    AppVersion? version;
+    try {
+      version = await UpgradeService.instance.currentVersion();
+    } catch (_) {
+      version = null;
+    }
+    if (!mounted) return;
+    setState(() {
+      _upgradeApi = api;
+      _version = version;
+    });
   }
 
   Future<void> _loadUsage() async {
@@ -210,6 +244,31 @@ class _SettingsPageState extends State<SettingsPage> {
                 busy: _cleaning,
                 onTap: _cleanOrphans,
               ),
+            ],
+          ),
+          _Group(
+            icon: Icons.system_update_outlined,
+            title: '更新',
+            children: <Widget>[
+              _InfoRow(
+                title: '当前版本',
+                value: _version?.toString() ?? '读不到',
+              ),
+              _OptionRow(
+                title: '检查更新地址',
+                subtitle: _upgradeApi.isEmpty
+                    ? '没配地址，检查更新不可用。点这里填自己的接口'
+                    : _upgradeApi,
+                value: _upgradeApi.isEmpty ? '未填写' : '已填写',
+                onTap: _editUpgradeApi,
+              ),
+              if (_upgradeApi.isNotEmpty)
+                _ActionRow(
+                  title: '检查更新',
+                  subtitle: '有新版本就下载并唤起安装',
+                  busy: _checkingUpgrade,
+                  onTap: _checkUpgrade,
+                ),
             ],
           ),
           _Group(
@@ -411,6 +470,118 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     }
     _toast('Key 已保存，重新打开地图即可生效');
+  }
+
+  Future<void> _editUpgradeApi() async {
+    final String? next = await showDialog<String>(
+      context: context,
+      builder: (_) => _TextConfigDialog(
+        title: '检查更新地址',
+        initial: _upgradeApi,
+        hint: 'https://example.com/latest',
+        description: '填一个自己的接口地址。App 会带上当前版本号去问它有没有'
+            '新版本，拿到 APK 地址后下载安装。\n\n'
+            '接口格式见仓库里的 docs/api.md。清空保存就是关掉这个功能。',
+        keyboard: TextInputType.url,
+      ),
+    );
+    if (next == null || !mounted) return;
+    await SettingsRepository.instance
+        .setString(SettingsRepository.keyUpgradeApi, next);
+    if (!mounted) return;
+    setState(() => _upgradeApi = next);
+    _toast(next.isEmpty ? '已关闭检查更新' : '已保存');
+  }
+
+  /// 检查更新。全程只在这里弹窗，服务层不碰 UI。
+  Future<void> _checkUpgrade() async {
+    final AppVersion? current = _version;
+    if (_upgradeApi.isEmpty || current == null) return;
+
+    setState(() => _checkingUpgrade = true);
+    try {
+      final UpgradeInfo info = await UpgradeService.instance.check(
+        baseUrl: _upgradeApi,
+        current: current,
+      );
+      if (!mounted) return;
+      if (!info.hasUpdate) {
+        _toast('已经是最新版本（$current）');
+        return;
+      }
+      final bool go = await _confirmUpgrade(info) ?? false;
+      if (!go || !mounted) return;
+      await _downloadAndInstall(info);
+    } on UpgradeFailure catch (e) {
+      if (mounted) _toast(e.message);
+    } finally {
+      if (mounted) setState(() => _checkingUpgrade = false);
+    }
+  }
+
+  Future<bool?> _confirmUpgrade(UpgradeInfo info) {
+    return showDialog<bool>(
+      context: context,
+      // 强制更新时不让点外面关掉
+      barrierDismissible: !info.force,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: Text('发现新版本 ${info.version}'),
+        content: SingleChildScrollView(
+          child: Text(
+            info.note.isEmpty ? '服务端没有提供更新说明。' : info.note,
+            style: const TextStyle(fontSize: 13, height: 1.6),
+          ),
+        ),
+        actions: <Widget>[
+          if (!info.force)
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('以后再说'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('立即更新'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 下载并唤起安装。进度弹窗自己持有进度，避免刷新整页。
+  Future<void> _downloadAndInstall(UpgradeInfo info) async {
+    final ValueNotifier<double?> progress = ValueNotifier<double?>(0);
+    bool dialogUp = true;
+    unawaited(showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _DownloadDialog(progress: progress),
+    ).then((_) => dialogUp = false));
+
+    try {
+      final File apk = await UpgradeService.instance.download(
+        info.url,
+        onProgress: (double? p) => progress.value = p,
+      );
+      if (dialogUp && mounted) Navigator.of(context).pop();
+      dialogUp = false;
+
+      final InstallOutcome outcome =
+          await UpgradeService.instance.install(apk);
+      if (!mounted) return;
+      switch (outcome) {
+        case InstallOutcome.started:
+          break;
+        case InstallOutcome.needPermission:
+          _toast('请先在系统设置里允许「安装未知应用」，然后回来重试');
+        case InstallOutcome.failed:
+          _toast('没能唤起安装程序');
+      }
+    } on UpgradeFailure catch (e) {
+      if (dialogUp && mounted) Navigator.of(context).pop();
+      if (mounted) _toast(e.message);
+    } finally {
+      progress.dispose();
+    }
   }
 
   Future<void> _copy(String label, String value) async {
@@ -682,6 +853,121 @@ class _ChoiceSheet<T> extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 通用的文本配置弹窗：说明 + 单行输入 + 取消/保存。
+///
+/// 升级地址、云端地址、账号、密码都用它，省得每种配置各写一个弹窗。
+/// 返回 null 表示取消；返回空串表示用户清空了这项配置。
+class _TextConfigDialog extends StatefulWidget {
+  const _TextConfigDialog({
+    required this.title,
+    required this.description,
+    this.initial = '',
+    this.hint = '',
+    this.keyboard = TextInputType.text,
+  });
+
+  final String title;
+  final String description;
+  final String initial;
+  final String hint;
+  final TextInputType keyboard;
+
+  @override
+  State<_TextConfigDialog> createState() => _TextConfigDialogState();
+}
+
+class _TextConfigDialogState extends State<_TextConfigDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Text(
+            widget.description,
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.6,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            maxLines: 1,
+            autocorrect: false,
+            enableSuggestions: false,
+            keyboardType: widget.keyboard,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(hintText: widget.hint, isDense: true),
+            style: const TextStyle(fontSize: 14),
+          ),
+        ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
+    );
+  }
+}
+
+/// 下载进度弹窗。进度值放在 ValueNotifier 里，只重建这一小块。
+class _DownloadDialog extends StatelessWidget {
+  const _DownloadDialog({required this.progress});
+
+  final ValueListenable<double?> progress;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('正在下载'),
+      content: ValueListenableBuilder<double?>(
+        valueListenable: progress,
+        builder: (BuildContext context, double? value, _) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              // 服务端没给 Content-Length 时 value 为 null，
+              // 进度条自动变成不确定态的来回滚动
+              LinearProgressIndicator(value: value),
+              const SizedBox(height: 10),
+              Text(
+                value == null
+                    ? '服务端没有告知文件大小，只能等它下完'
+                    : '${(value * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

@@ -13,6 +13,7 @@ import 'package:location_marker/services/amap_runtime.dart';
 import 'package:location_marker/services/media_store.dart';
 import 'package:location_marker/services/settings_controller.dart';
 import 'package:location_marker/theme/app_theme.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// 设置页跑在真实的内存数据库上：改一项要真的落库，重新读还在。
@@ -380,6 +381,73 @@ void main() {
       expect(find.text('签名 SHA1'), findsOneWidget);
       // 两行各一个占位
       expect(find.text('读取中…'), findsNWidgets(2));
+    });
+  });
+
+  group('检查更新', () {
+    setUp(() {
+      PackageInfo.setMockInitialValues(
+        appName: '踩点',
+        packageName: 'com.example.location_marker',
+        version: '1.2.3',
+        buildNumber: '7',
+        buildSignature: '',
+      );
+    });
+
+    testWidgets('显示本机版本号', (WidgetTester tester) async {
+      await pumpPage(tester);
+      expect(find.text('1.2.3 (7)'), findsOneWidget);
+    });
+
+    testWidgets('没填地址时不显示「检查更新」——点了也没处问去',
+        (WidgetTester tester) async {
+      await pumpPage(tester);
+
+      expect(find.text('检查更新地址'), findsOneWidget);
+      expect(find.text('未填写'), findsOneWidget);
+      expect(find.text('检查更新'), findsNothing);
+    });
+
+    testWidgets('填了地址会落库，并露出「检查更新」', (WidgetTester tester) async {
+      await pumpPage(tester);
+      await tester.tap(find.text('检查更新地址'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField),
+        'https://example.com/latest',
+      );
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(
+        await SettingsRepository.instance
+            .getString(SettingsRepository.keyUpgradeApi),
+        'https://example.com/latest',
+      );
+      expect(find.text('已填写'), findsOneWidget);
+      expect(find.text('检查更新'), findsOneWidget);
+    });
+
+    testWidgets('清空地址等于关掉这个功能', (WidgetTester tester) async {
+      await SettingsRepository.instance.setString(
+        SettingsRepository.keyUpgradeApi,
+        'https://example.com/latest',
+      );
+
+      await pumpPage(tester);
+      expect(find.text('检查更新'), findsOneWidget);
+
+      await tester.tap(find.text('检查更新地址'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('未填写'), findsOneWidget);
+      expect(find.text('检查更新'), findsNothing);
+      expect(find.text('已关闭检查更新'), findsOneWidget);
     });
   });
 }

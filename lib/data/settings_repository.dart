@@ -17,6 +17,17 @@ class SettingsRepository {
   static const String keyAmapAndroidKey = 'amap_android_key';
   static const String keyAmapIosKey = 'amap_ios_key';
 
+  /// 检查更新的服务地址。空串表示没配，设置页不显示「检查更新」。
+  static const String keyUpgradeApi = 'upgrade_api';
+
+  /// 云端同步：地址、账号、密码。三项齐全才算配好。
+  ///
+  /// 和高德 Key 一样不进 AppSettings——「恢复默认设置」重置的是偏好，
+  /// 不该顺手把用户的账号密码删掉。
+  static const String keyCloudApi = 'cloud_api';
+  static const String keyCloudAccount = 'cloud_account';
+  static const String keyCloudPassword = 'cloud_password';
+
   final AppDatabase _appDb;
 
   Future<String?> getString(String key) async {

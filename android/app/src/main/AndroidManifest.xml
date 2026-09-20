@@ -17,13 +17,16 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <!-- 应用内检查更新后唤起系统安装器。Android 8 起用户还要在系统设置里
+         单独允许本应用「安装未知应用」，代码里会先查、没授权就跳过去。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.location.gps" android:required="false"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
 
     <application
-        android:label="location_marker"
+        android:label="踩点"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -50,6 +53,17 @@
         </activity>
         <!-- 高德定位 SDK 必需的后台服务，不声明的话定位起不来 -->
         <service android:name="com.amap.api.location.APSService"/>
+        <!-- 把下载好的 APK 交给系统安装器时用。Android 7+ 直接传 file://
+             会抛 FileUriExposedException，必须换成 content:// -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.example.location_marker.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths"/>
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

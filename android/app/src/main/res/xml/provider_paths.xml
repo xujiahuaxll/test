@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 能对外暴露哪些目录。
+     只开放 files/upgrade 一个子目录：下载的 APK 就放那儿，其它什么都不开，
+     照片和录音不该被别的应用读到。 -->
+<paths>
+    <files-path name="upgrade" path="upgrade/"/>
+</paths>
