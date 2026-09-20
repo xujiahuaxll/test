@@ -97,7 +97,7 @@
 | 地图 | 实时路况 | 在全局地图上叠加拥堵图层 |
 | 地图 | 同意高德隐私声明 | 可以随时撤回；撤回后地图退回本地示意图。没配 Key 时置灰 |
 | 地图 | 高德地图 Key | 点开填自己的 Key，存本机；空着则用打包时内置的 |
-| 地图 | 应用包名 / 签名 SHA1 | 只读，点一下复制。登记高德 Key 要填这两个；换一版包 SHA1 会变，不改绑就报 1009 |
+| 地图 | 应用包名 / 签名 SHA1 | 只读，点一下复制。登记高德 Key 要填这两个。这里显示的是**证书**指纹，只跟签名用的 keystore 走，换一版包不会变；填错或换了 keystore 没改绑才报 1009 |
 | 定位 | 定位精度 | 高精度 / 均衡 / 省电，对应 `LocationAccuracy` 的三档 |
 | 定位 | 定位超时 | 10 / 20 / 30 / 60 秒 |
 | 定位 | 自动解析地址 | 关掉就只记经纬度，不调系统逆地理编码 |
@@ -151,9 +151,26 @@ cp android/amap.properties.example android/amap.properties   # 填入自己的 K
 
 ### 3. 签名：让用户能注册自己的 Key 的前提
 
-高德 Key 绑定的是「包名 + 签名 SHA1」。这个项目的 release 构建默认用
-**debug 签名**，而 debug keystore 是构建机现场生成的——每次换一台 CI runner
-就是一个新的 SHA1，用户按上一版 APK 注册的 Key 立刻失效。
+高德 Key 绑定的是「包名 + 签名 SHA1」。
+
+**先分清两个都叫 SHA1 的东西**，这是最容易绕进去的地方：
+
+| | 是什么 | 会不会变 |
+| --- | --- | --- |
+| **证书 SHA1** | keystore 里那张证书的指纹。**高德要的是这个** | keystore 不换就永远不变，跟改了多少代码、发了多少版都无关 |
+| APK 文件的 SHA1 | 这个 apk 文件本身的校验和（构建产物里那个 `app-release.apk.sha1`） | 每次构建都不一样，**和高德毫无关系** |
+
+下面说的 SHA1 一律指证书 SHA1。
+
+**用哪把签名是按文件在不在决定的**：`android/app/build.gradle.kts` 里
+`hasReleaseKeystore = rootProject.file("key.properties").exists()`，
+release 构建照这个二选一；CI 那边只在 Secret `ANDROID_KEYSTORE_BASE64`
+非空时才写出 `android/key.properties`。
+
+所以**没配 Secret 时**会退回 **debug 签名**，而 debug keystore 是构建机现场
+生成的——每次换一台 CI runner 就是一个新的 SHA1，按上一版 APK 注册的 Key
+立刻失效。配好下面那四个 Secret 之后就不会了：每次构建都用同一把 keystore，
+证书 SHA1 固定，高德那边登记一次就不用再管。
 
 **为什么签名和 Key 有关**：包名只是个字符串，谁都能填成
 `com.example.location_marker` 来盗用你的 Key；而签名需要私钥，伪造不了。
@@ -189,6 +206,13 @@ CI 构建：在仓库 Settings → Secrets and variables → Actions 添加四�
 
 不管走哪条路，构建日志的「打印签名 SHA1」一步都会输出这次用的证书指纹，
 把它填到高德开放平台建 Key 时的「SHA1」栏里。
+
+**证书 SHA1 只有这两种情况会变**，其余任何改动都不会动它：
+
+1. 换了一把 keystore（重新跑 `make-release-key.sh` 生成新的）；
+2. 那四个 Secret 里任何一个被删掉或改错，导致构建退回 debug 签名。
+
+改代码、改版本号、加依赖、换 Flutter 版本——都不会让它变。
 
 ### 4. 不能开 R8（`shrink=false`）
 
@@ -312,9 +336,13 @@ CI 每次构建都会跑这个脚本，并在打包后校验模型确实进了 A
 也可以在 Actions 页面手动 `Run workflow`。
 
 想让包里的地图能用，先在仓库 Settings → Secrets and variables → Actions
-添加 `AMAP_ANDROID_KEY`（Key 要绑定包名 `com.example.location_marker`
-和签名 SHA1；CI 用的是 debug 签名，SHA1 与本地 debug keystore 不同，
-需要按 CI 的签名另配一个 Key，或改用自己的 release keystore）。
+添加 `AMAP_ANDROID_KEY`。这个 Key 要绑定包名 `com.example.location_marker`
+和证书 SHA1——SHA1 从构建日志的「打印签名 SHA1」那一步读，它直接从打出来的
+APK 里取，是使用者实际拿到的那个签名。
+
+配好「签名」一节那四个 Secret 之后，这个值每次构建都一样，登记一次就够了；
+四个 Secret 缺任何一个都会退回 debug 签名，SHA1 随构建机变化，日志里也会
+给出警告。
 
 本地打包：
 
