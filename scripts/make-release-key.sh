@@ -7,16 +7,73 @@
 # 于是每构建一次就要重新登记一次 Key。固定签名之后这个问题一劳永逸。
 #
 # 用法：bash scripts/make-release-key.sh
-# 需要本机有 JDK（keytool 随 JDK 附带）。
+#
+# 需要 keytool（随 JDK 附带）。做 Android 开发的机器上基本都已经有了，
+# 只是不一定在 PATH 上——Android Studio 自带的那套 JBR 就带 keytool。
+# 下面会挨个找过去，实在找不到再让你装。
+# 也可以自己指定：KEYTOOL=/path/to/keytool bash scripts/make-release-key.sh
 set -euo pipefail
 
 KEYSTORE="${1:-release.jks}"
 ALIAS="release"
 
-if ! command -v keytool >/dev/null 2>&1; then
-  echo "找不到 keytool。它随 JDK 附带，请先装一个 JDK（如 Temurin 17）。" >&2
+# 找 keytool。Windows 上可执行文件带 .exe，两种都试。
+find_keytool() {
+  if [ -n "${KEYTOOL:-}" ]; then
+    command -v "$KEYTOOL" >/dev/null 2>&1 && { echo "$KEYTOOL"; return 0; }
+    echo "指定的 KEYTOOL=$KEYTOOL 用不了。" >&2
+    return 1
+  fi
+
+  if command -v keytool >/dev/null 2>&1; then
+    command -v keytool
+    return 0
+  fi
+
+  local candidates=()
+  [ -n "${JAVA_HOME:-}" ] && candidates+=("$JAVA_HOME/bin/keytool")
+  candidates+=(
+    # Android Studio 自带的 JBR / JRE，做 Android 开发的机器上都有
+    "/c/Program Files/Android/Android Studio/jbr/bin/keytool.exe"
+    "/c/Program Files/Android/Android Studio/jre/bin/keytool.exe"
+    "$HOME/AppData/Local/Programs/Android Studio/jbr/bin/keytool.exe"
+    "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool"
+    "/Applications/Android Studio.app/Contents/jre/Contents/Home/bin/keytool"
+    "$HOME/android-studio/jbr/bin/keytool"
+  )
+  local path
+  for path in "${candidates[@]}"; do
+    [ -x "$path" ] && { echo "$path"; return 0; }
+  done
+
+  # 独立安装的 JDK，按目录名猜
+  for path in \
+    "/c/Program Files/Eclipse Adoptium"/jdk*/bin/keytool.exe \
+    "/c/Program Files/Java"/jdk*/bin/keytool.exe \
+    /usr/lib/jvm/*/bin/keytool
+  do
+    [ -x "$path" ] && { echo "$path"; return 0; }
+  done
+
+  return 1
+}
+
+KEYTOOL_BIN="$(find_keytool)" || {
+  echo "找不到 keytool。" >&2
+  echo >&2
+  echo "它随 JDK 附带，你多半已经有了，只是不在 PATH 上：" >&2
+  echo "  · 装过 Android Studio 的话，它在" >&2
+  echo "    C:\\Program Files\\Android\\Android Studio\\jbr\\bin\\keytool.exe" >&2
+  echo "  · 用 flutter doctor -v 也能看到 Java 的位置" >&2
+  echo >&2
+  echo "找到之后这样跑：" >&2
+  echo "  KEYTOOL='/c/Program Files/Android/Android Studio/jbr/bin/keytool.exe' \\" >&2
+  echo "    bash scripts/make-release-key.sh" >&2
+  echo >&2
+  echo "都没有就装一个 JDK（如 Temurin 17）。" >&2
   exit 1
-fi
+}
+echo "用 $KEYTOOL_BIN"
 
 if [ -e "$KEYSTORE" ]; then
   echo "『$KEYSTORE』已存在。" >&2
@@ -37,14 +94,21 @@ random_hex() {
 }
 PASSWORD="$(random_hex)"
 
-keytool -genkeypair -v \
+"$KEYTOOL_BIN" -genkeypair -v \
   -keystore "$KEYSTORE" \
   -alias "$ALIAS" \
   -keyalg RSA -keysize 2048 -validity 10000 \
   -storepass "$PASSWORD" -keypass "$PASSWORD" \
   -dname "CN=location_marker, OU=, O=, L=, S=, C=CN" >/dev/null
 
-SHA1="$(keytool -list -v -keystore "$KEYSTORE" -alias "$ALIAS" \
+# keytool 偶尔会失败但退出码为 0（比如口令策略拦下来）。
+# 不检查的话下一步 base64 会报 "No such file"，看着像脚本坏了。
+if [ ! -s "$KEYSTORE" ]; then
+  echo "keytool 没有生成『$KEYSTORE』。上面它自己的报错才是真正的原因。" >&2
+  exit 1
+fi
+
+SHA1="$("$KEYTOOL_BIN" -list -v -keystore "$KEYSTORE" -alias "$ALIAS" \
   -storepass "$PASSWORD" 2>/dev/null |
   grep -i 'SHA1:' | head -1 | sed 's/.*SHA1: *//')"
 
