@@ -1,7 +1,11 @@
 name: location_marker
 description: "踩点 —— 把去过的地方记下来（本地优先，可选云端同步）"
 publish_to: "none"
-version: 1.0.0+1
+# 加号前是版本名（1.1.0），后面那个整数是 versionCode。
+# versionCode 是「检查更新」判定新旧的唯一可靠依据——它只增不减、没有
+# 「1.9 和 1.10 谁大」的歧义。每发一版都要把它 +1，忘了改的话客户端
+# 拿两边一比发现一样大，就永远判不出有新版本。
+version: 1.1.0+2
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
