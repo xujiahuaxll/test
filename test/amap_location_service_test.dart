@@ -323,15 +323,64 @@ void main() {
       expect(places.bestName, '中铁吉盛物流大厦');
     });
 
-    test('没有楼宇时用最近的 POI，它比园区名更具体', () {
+    test('没有楼宇时用楼栋号，它比园区名更具体', () {
       final AmapPlaces places = AmapPlaces.fromMap(payload(
         aoiName: '双河北里小区',
         pois: <Map<String, Object?>>[
-          <String, Object?>{'title': '双河北里小区-乙27号楼', 'distance': 12},
-          <String, Object?>{'title': '金羽毛羽球馆', 'distance': 180},
+          // 190406 = 楼栋号
+          <String, Object?>{
+            'title': '双河北里小区-乙27号楼',
+            'distance': 12,
+            'typeCode': '190406',
+          },
+          // 080000 = 体育休闲，权重不够格代表这个位置
+          <String, Object?>{
+            'title': '金羽毛羽球馆',
+            'distance': 180,
+            'typeCode': '080300',
+          },
         ],
       ));
       expect(places.bestName, '双河北里小区-乙27号楼');
+    });
+
+    test('只有商户时用园区名，不能让「XX咖啡」冒充这个位置', () {
+      // 这正是用户报的问题：拖到小区里，顶上显示的却是门口的咖啡店
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        aoiName: '双河北里小区',
+        pois: <Map<String, Object?>>[
+          <String, Object?>{
+            'title': '幸运咖(双河北里店)',
+            'distance': 8,
+            'typeCode': '050500',
+          },
+        ],
+      ));
+      expect(places.bestName, '双河北里小区');
+    });
+
+    test('连园区都没有时，商户也好过什么都不显示', () {
+      final AmapPlaces places = AmapPlaces.fromMap(payload(
+        pois: <Map<String, Object?>>[
+          <String, Object?>{
+            'title': '中石化加油站',
+            'distance': 60,
+            'typeCode': '010100',
+          },
+        ],
+      ));
+      expect(places.bestName, '中石化加油站');
+    });
+
+    test('AOI 太大就不拿来当地点名', () {
+      // 「某某经济开发区」整片几平方公里，用它当标题等于什么都没说
+      final AmapPlaces places = AmapPlaces.fromMap(<Object?, Object?>{
+        'formatAddress': '某市某区某路',
+        'aoiName': '某某经济技术开发区',
+        'aoiArea': 8600000.0,
+        'pois': <Map<String, Object?>>[],
+      });
+      expect(places.bestName, isNull);
     });
 
     test('只有园区名时用园区名', () {

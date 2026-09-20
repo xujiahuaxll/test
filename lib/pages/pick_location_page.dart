@@ -12,6 +12,7 @@ import '../services/location_service.dart';
 import '../services/settings_controller.dart';
 import '../theme/app_theme.dart';
 import '../utils/coordinate.dart';
+import '../utils/place_ranking.dart';
 import 'city_picker_page.dart';
 
 /// 在高德地图上手动选点。
@@ -186,8 +187,12 @@ class PickLocationPageState extends State<PickLocationPage> {
         placeName = places.bestName;
         address = places.formatAddress.isEmpty ? null : places.formatAddress;
         _rememberCity(places.cityDistrict);
-        // 周边搜索能给到「XX号楼」这一级，比逆地理编码的结果具体
-        if (_nearby.isNotEmpty) placeName = _nearby.first.title;
+        // 逆地理编码认不出落点在哪栋楼时，才拿周边搜索权重最高的那条顶上。
+        // 这里原本是无条件用「最近的 POI」覆盖，而商户密度远高于楼宇，
+        // 于是拖到哪儿都是「XX咖啡」——楼宇名明明已经拿到了却被盖掉。
+        if (placeName == null && _nearby.isNotEmpty) {
+          placeName = _nearby.first.title;
+        }
       } on LocationFailure {
         // 高德不可用就往下走系统解析
       }
@@ -241,7 +246,8 @@ class PickLocationPageState extends State<PickLocationPage> {
       );
       if (!mounted || seq != _requestSeq) return;
       setState(() {
-        _nearby = places;
+        // 建筑、站点排在店铺前面，和高德地图的顺序一致
+        _nearby = PlaceRanking.rank(AmapPlace.dedupe(places));
         _nearbyError = null;
       });
     } on LocationFailure catch (failure) {

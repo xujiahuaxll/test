@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 
 import '../models/app_settings.dart';
 import '../utils/coordinate.dart';
+import '../utils/place_ranking.dart';
 import 'amap_location_service.dart';
 import 'amap_runtime.dart';
 import 'settings_controller.dart';
@@ -213,20 +214,25 @@ class LocationService {
       final String? full =
           places.formatAddress.isEmpty ? null : places.formatAddress;
 
-      // 地点名优先用周边搜索的最近结果：它按距离排序、楼宇也搜得到，
-      // 能给到「XX号楼」这一级；逆地理编码常常只到小区或街道。
+      // 先用逆地理编码判定的「落点所在建筑」；它认不出来时，才拿周边搜索
+      // 里权重最高的那条顶上。原来这里是无条件用「最近的 POI」覆盖，
+      // 而商户密度远高于楼宇，结果站在楼里定位出来却是门口的奶茶店。
       String? name = places.bestName;
-      try {
-        final List<AmapPlace> nearby =
-            await AmapLocationService.instance.nearbyPois(
-          apiKey: AmapRuntime.instance.effectiveKey,
-          latitude: gcj.latitude,
-          longitude: gcj.longitude,
-          radius: 500,
-        );
-        if (nearby.isNotEmpty) name = nearby.first.title;
-      } on LocationFailure {
-        // 拿不到就用逆地理编码给的那个，不影响主流程
+      if (name == null) {
+        try {
+          final List<AmapPlace> nearby =
+              await AmapLocationService.instance.nearbyPois(
+            apiKey: AmapRuntime.instance.effectiveKey,
+            latitude: gcj.latitude,
+            longitude: gcj.longitude,
+            radius: 500,
+          );
+          final List<AmapPlace> ranked =
+              PlaceRanking.rank(AmapPlace.dedupe(nearby));
+          if (ranked.isNotEmpty) name = ranked.first.title;
+        } on LocationFailure {
+          // 拿不到就只用逆地理编码给的那个，不影响主流程
+        }
       }
 
       // 地点名取不到也没关系，有整句地址就够界面显示了。

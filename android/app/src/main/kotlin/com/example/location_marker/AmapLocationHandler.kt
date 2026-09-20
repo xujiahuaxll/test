@@ -26,6 +26,7 @@ import com.amap.api.services.help.InputtipsQuery
 import com.amap.api.services.help.Tip
 import com.amap.api.services.poisearch.PoiResult
 import com.amap.api.services.poisearch.PoiSearch
+import com.amap.api.services.poisearch.SubPoiItem
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -348,9 +349,34 @@ class AmapLocationHandler(private val context: Context) {
         "snippet" to poi.snippet.orEmpty(),
         "distance" to poi.distance,
         "typeDes" to poi.typeDes.orEmpty(),
+        // 六位分类编码。Dart 侧靠它把「楼宇、地铁站」排到「咖啡店」前面——
+        // 高德的 poiweight 权重值 SDK 不暴露，只能用公开的分类自己估。
+        "typeCode" to poi.typeCode.orEmpty(),
         "latitude" to poi.latLonPoint?.latitude,
         "longitude" to poi.latLonPoint?.longitude,
     )
+
+    /**
+     * 子 POI 摊平成独立条目，「某某地铁站B口」就是这么来的。
+     *
+     * SubPoiItem 没有自己的 typeCode，继承父级的——出入口本来就属于
+     * 父站点那一类，不继承的话它会掉进「未知分类」，排不到店铺前面。
+     */
+    private fun subPoiToMap(parent: PoiItem, sub: SubPoiItem): Map<String, Any?> {
+        val ownTitle = sub.title.orEmpty().trim()
+        val subName = sub.subName.orEmpty().trim()
+        return mapOf(
+            // getTitle 通常已经是全名；只有它为空时才拿父名拼一个
+            "title" to if (ownTitle.isNotEmpty()) ownTitle
+                       else (parent.title.orEmpty() + subName),
+            "snippet" to sub.snippet.orEmpty(),
+            "distance" to sub.distance,
+            "typeDes" to sub.subTypeDes.orEmpty(),
+            "typeCode" to parent.typeCode.orEmpty(),
+            "latitude" to sub.latLonPoint?.latitude,
+            "longitude" to sub.latLonPoint?.longitude,
+        )
+    }
 
     /**
      * 输入提示：边打字边给候选，和地图 App 里的搜索一样。
@@ -430,12 +456,20 @@ class AmapLocationHandler(private val context: Context) {
 
         val query = PoiSearch.Query(
             call.argument<String>("keyword").orEmpty(),
-            "",
+            // 分类限定。留空就是不限，由 Dart 侧按分类权重自己重排
+            call.argument<String>("types").orEmpty(),
             "",
         )
         query.pageSize = 25
         query.pageNum = 0
-        query.setDistanceSort(true)
+        // 这里刻意不开 distanceSort：开了就是纯距离排序，等于把高德自己的
+        // POI 权重扔掉——而商户密度远高于楼宇，结果就是拖到哪儿都是「XX咖啡」。
+        // 关掉它走高德的默认排序，权重高的（楼宇、地铁站）先回来，
+        // Dart 侧再按分类权重和距离细排一次。
+        query.setDistanceSort(false)
+        // 要子 POI，地铁站的各个出入口才会跟着父站点一起回来
+        query.requireSubPois(true)
+        query.setExtensions(PoiSearch.EXTENSIONS_ALL)
 
         val search = try {
             PoiSearch(context, query)
@@ -463,10 +497,16 @@ class AmapLocationHandler(private val context: Context) {
                             )
                             return@post
                         }
+                        val pois = (poiResult?.pois ?: arrayListOf())
+                            .filter { !it.title.isNullOrBlank() }
                         result.success(
-                            (poiResult?.pois ?: arrayListOf())
-                                .filter { !it.title.isNullOrBlank() }
-                                .map { poiToMap(it) }
+                            pois.flatMap { poi ->
+                                // 父站点和它的出入口都列出来，让用户自己挑
+                                listOf(poiToMap(poi)) +
+                                    (poi.getSubPois() ?: emptyList())
+                                        .filter { !it.title.isNullOrBlank() }
+                                        .map { subPoiToMap(poi, it) }
+                            }
                         )
                     }
                 }
@@ -569,6 +609,7 @@ class AmapLocationHandler(private val context: Context) {
 
     private fun toMap(address: RegeocodeAddress): Map<String, Any?> {
         val pois: List<PoiItem> = address.pois ?: emptyList()
+        val aoi = address.aois?.firstOrNull()
         return mapOf(
             "formatAddress" to address.formatAddress.orEmpty(),
             "province" to address.province.orEmpty(),
@@ -580,14 +621,16 @@ class AmapLocationHandler(private val context: Context) {
             "township" to address.township.orEmpty(),
             "neighborhood" to address.neighborhood.orEmpty(),
             "building" to address.building.orEmpty(),
-            "aoiName" to (address.aois?.firstOrNull()?.aoiName.orEmpty()),
-            // 按距离近的排在前面，界面直接照这个顺序给用户选
-            "pois" to pois
-                .sortedBy { it.distance }
-                .take(20)
-                .map { poi ->
-                    poiToMap(poi)
-                },
+            "aoiName" to aoi?.aoiName.orEmpty(),
+            // AOI 的面积（平方米）。大学城、开发区整片也是一个 AOI，
+            // 拿它当地点名等于什么都没说，Dart 侧靠这个数把太大的滤掉。
+            "aoiArea" to aoi?.aoiArea?.toDouble(),
+            "aoiDistance" to aoi?.distance?.toDouble(),
+            // 保持高德给的顺序，不要按距离重排：它自己的排序带 POI 权重，
+            // 按距离排等于把权重扔了，再截前 20 条就可能把落点所在的那栋楼
+            // 切掉——先排到第 21 位，永远轮不上。细排交给 Dart 的
+            // PlaceRanking，那边看得到分类编码。
+            "pois" to pois.take(20).map { poi -> poiToMap(poi) },
         )
     }
 }

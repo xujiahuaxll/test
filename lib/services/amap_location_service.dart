@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 
 import '../models/app_settings.dart';
 import '../utils/coordinate.dart';
+import '../utils/place_ranking.dart';
 import 'location_service.dart';
 
 /// 高德定位。走 MethodChannel 调原生的 AMapLocationClient。
@@ -261,6 +262,7 @@ class AmapLocationService {
     required double longitude,
     int radius = 1000,
     String keyword = '',
+    String types = '',
   }) {
     return _listCall('nearbyPois', <String, Object?>{
       'apiKey': apiKey,
@@ -268,6 +270,7 @@ class AmapLocationService {
       'longitude': longitude,
       'radius': radius,
       'keyword': keyword,
+      'types': types,
     }, '获取附近地点失败');
   }
 
@@ -336,11 +339,18 @@ class AmapPlace {
     required this.title,
     required this.distance,
     this.snippet = '',
+    this.typeCode = '',
     this.latitude,
     this.longitude,
   });
 
   final String title;
+
+  /// 高德的六位分类编码（「大类 中类 小类」）。排序靠它区分楼宇和店铺。
+  final String typeCode;
+
+  /// 这条地点的分类权重，越大越「像个地方」。
+  int get weight => PlaceRanking.weightOf(typeCode);
 
   /// 这个地点自己的 GCJ-02 坐标。选中它时把图钉挪过去用。
   /// 输入提示里个别条目（公交线路之类）没有坐标，那种已在原生侧滤掉。
@@ -362,6 +372,7 @@ class AmapPlace {
         title: (raw['title'] as String? ?? '').trim(),
         distance: (raw['distance'] as num?)?.toInt() ?? 0,
         snippet: (raw['snippet'] as String? ?? '').trim(),
+        typeCode: (raw['typeCode'] as String? ?? '').trim(),
         latitude: (raw['latitude'] as num?)?.toDouble(),
         longitude: (raw['longitude'] as num?)?.toDouble(),
       );
@@ -370,6 +381,15 @@ class AmapPlace {
         for (final Object? item in (raw as List<Object?>? ?? const <Object?>[]))
           if (item is Map<Object?, Object?>) AmapPlace.fromMap(item),
       ].where((AmapPlace p) => p.title.isNotEmpty).toList(growable: false);
+
+  /// 同一个地点可能从周边搜索和子 POI 两条路回来，按「名字 + 坐标」去重。
+  static List<AmapPlace> dedupe(List<AmapPlace> places) {
+    final Set<String> seen = <String>{};
+    return <AmapPlace>[
+      for (final AmapPlace p in places)
+        if (seen.add('${p.title}|${p.latitude}|${p.longitude}')) p,
+    ];
+  }
 }
 
 /// 一次逆地理编码的结果。
@@ -382,6 +402,8 @@ class AmapPlaces {
     this.province = '',
     this.city = '',
     this.adCode = '',
+    this.aoiArea,
+    this.aoiDistance,
   });
 
   /// 「北京市大兴区天河北路5号」这种整句地址。
@@ -392,6 +414,11 @@ class AmapPlaces {
 
   final String building;
   final String aoiName;
+
+  /// AOI 的面积（平方米）与到边界的距离。
+  /// 面积用来把「整个开发区」这种太粗的结果挡在地点名之外。
+  final double? aoiArea;
+  final double? aoiDistance;
 
   /// 所在行政区。手动选点页拿它当搜索的默认城市。
   final String province;
@@ -407,23 +434,15 @@ class AmapPlaces {
         adCode: adCode,
       );
 
-  /// 最贴切的一个地点名：楼宇 > 最近的 POI > 园区。
+  /// 最贴切的一个地点名：落点所在的建筑 > 权重最高的那个 POI。
+  ///
+  /// 「落点所在的建筑」不跟周围的店铺比距离——高德地图就是这么干的，
+  /// 拖到楼上显示楼名，哪怕楼下有家更近的咖啡店。之前这里取的是
+  /// 「最近的 POI」，而商户密度远高于楼宇，于是拖到哪儿都是「XX咖啡」。
   ///
   /// 取不到就返回 null，**不回落到整句地址**——回落的话标题和副标题
   /// 会变成同一句话，等于白占一行。上层拿到 null 时自己用地址当标题。
-  ///
-  /// POI 排在园区前面是因为它更具体：站在小区里，POI 可能是
-  /// 「双河北里小区-乙27号楼」，而园区名只有「双河北里小区」。
-  String? get bestName {
-    final String buildingName = building.trim();
-    if (buildingName.isNotEmpty) return buildingName;
-
-    if (places.isNotEmpty && places.first.title.isNotEmpty) {
-      return places.first.title;
-    }
-    final String aoi = aoiName.trim();
-    return aoi.isEmpty ? null : aoi;
-  }
+  String? get bestName => PlaceRanking.bestNameOf(this);
 
   static AmapPlaces fromMap(Map<Object?, Object?> raw) {
     final List<Object?> rawPois =
@@ -435,6 +454,8 @@ class AmapPlaces {
       province: (raw['province'] as String? ?? '').trim(),
       city: (raw['city'] as String? ?? '').trim(),
       adCode: (raw['adCode'] as String? ?? '').trim(),
+      aoiArea: (raw['aoiArea'] as num?)?.toDouble(),
+      aoiDistance: (raw['aoiDistance'] as num?)?.toDouble(),
       places: <AmapPlace>[
         for (final Object? item in rawPois)
           if (item is Map<Object?, Object?>)

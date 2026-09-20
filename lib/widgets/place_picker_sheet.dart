@@ -4,6 +4,7 @@ import '../services/amap_location_service.dart';
 import '../services/amap_runtime.dart';
 import '../services/location_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/place_ranking.dart';
 
 /// 用户选中的地点：名称做标题，地址做副标题。
 class PickedPlace {
@@ -111,7 +112,7 @@ class _PlacePickerSheetState extends State<PlacePickerSheet> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '按距离由近到远',
+                  '建筑与站点在前，其次是附近的商户',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 10),
@@ -154,7 +155,9 @@ class _PlacePickerSheetState extends State<PlacePickerSheet> {
       );
     }
 
-    final List<AmapPlace> items = places.places;
+    // 建筑、站点排在店铺前面；纯按距离排的话满屏都是沿街小店
+    final List<AmapPlace> items =
+        PlaceRanking.rank(AmapPlace.dedupe(places.places));
     if (items.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 28),
